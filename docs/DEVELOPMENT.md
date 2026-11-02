@@ -1,0 +1,158 @@
+# Developing IdleWalker
+
+Everything you need to build, test, port-check and release IdleWalker. For what it is and how to install it, see the [README](../README.md).
+
+## Build and run
+
+```sh
+cargo build --release
+target/release/idlewalker          # idlewalker.exe on Windows
+cargo test --release --test selftest
+```
+
+## Where things are kept
+
+| OS      | Folder                                       | "Start at sign-in"                                  |
+| ------- | -------------------------------------------- | --------------------------------------------------- |
+| Windows | `%APPDATA%\IdleWalker`                     | the `IdleWalker` value of the HKCU `Run` key    |
+| macOS   | `~/Library/Application Support/IdleWalker` | `~/Library/LaunchAgents/com.idlewalker.app.plist` |
+| Linux   | `~/.config/idlewalker`                     | `~/.config/autostart/idlewalker.desktop`          |
+
+The folder holds `settings.txt` (menu choices) and `brains.txt` (what the walkers learned).
+`brains.txt` has the same format and, on Windows, the same location as the C# version, so
+an existing cast keeps its memories; menu choices not yet in `settings.txt` are read from
+the C# version's registry key.
+
+## Platform differences
+
+The C# version leaned on Windows-only behaviour. Not all of it exists elsewhere:
+
+| Feature                               | Windows      | macOS                                                             | Linux on X11                                                  | Linux on Wayland (via XWayland)                                                     |
+| ------------------------------------- | ------------ | ----------------------------------------------------------------- | ------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| Walkers, click-through, always on top | Yes          | Yes                                                               | Yes (needs a compositor)                                      | Yes, above X11 and most native windows                                              |
+| Idle detection from the cursor        | Yes          | Yes                                                               | Yes                                                           | **Limited**: Wayland hides the cursor while it is over native Wayland windows |
+| Hot corners                           | Yes          | Yes                                                               | Yes                                                           | **Limited**, for the same reason                                              |
+| Corner actions                        | All          | Keys need the Accessibility permission                            | By desktop shortcuts: GNOME and KDE defaults, others may vary | Not reliable                                                                        |
+| Full-screen detection                 | Yes          | Active app only                                                   | Yes (needs an EWMH window manager)                            | X11 windows only                                                                    |
+| Brightness, built-in panel            | Yes          | Yes, through a private framework that a future macOS could remove | Yes (`brightnessctl` or a udev rule)                        | Same as X11                                                                         |
+| Brightness, external monitors         | Yes (DDC/CI) | DDC/CI on Apple Silicon (private IOKit calls), otherwise software dimming | With `ddcutil`                                              | With `ddcutil`                                                                    |
+| Hidden from screenshots               | Yes          | Only where macOS still honours it                                 | **No**                                                  | **No**                                                                        |
+| Anti-idle nudge                       | Yes          | `caffeinate`                                                    | `systemd-inhibit` and the X screen-saver reset              | `systemd-inhibit`                                                                 |
+
+Differences on every OS, compared with the C# version:
+
+- **The settings menu is drawn by the program.** Native tray menus close after every click, so
+  this one replaces them: it stays open while you change settings, and a click outside or Esc
+  closes it. Groups open in place instead of as fly-outs. On Linux the desktop's own right-click
+  menu has a **Settings...** entry that opens it.
+- **Dialogs are drawn by the program**, in one dark style with a bundled font, rather than
+  with native Windows controls. "Forget everything..." asks inside the dashboard.
+- **The colour picker is three sliders**, in place of the Windows colour dialog.
+- **A start-up setting failure is logged**, not shown as a balloon tip.
+
+## How it is built
+
+The code follows Clean Architecture: one Cargo crate per layer, and each crate may depend only
+on the layers inside it. Cargo enforces this, so a dependency that points outward does not compile.
+
+```
+crate         depends on
+domain        nothing
+rendering     domain
+application   domain
+platform      domain, rendering, application   (implements their ports)
+ui            domain, rendering, application   (never platform)
+src/main.rs   all of them: the composition root
+```
+
+```
+crates/
+├── domain/        entities: the cast, rt.rs (the runtime under the translated code: reference
+│                  semantics, .NET numerics and Random) and settings.rs. No dependencies at all.
+│                  Its ports: rt::IWorldApi (the monitors) and rt::LocalClock (local time).
+├── rendering/     presenter: the software painters and the paint threads. Depends on domain.
+│                  Its port: SpriteSink, the window a finished frame is shown in.
+├── application/   use cases: the per-frame session (idle, hot corners, keep-awake, full-screen,
+│                  brain saves, menu choices), preferences, brains and update checks. Depends on
+│                  domain. Its ports (ports.rs): Desktop, Displays, PreferenceStore, BrainStore,
+│                  ReleaseFeed, Journal.
+├── platform/      adapters: one OS backend each in windows.rs, macos.rs and linux.rs (the same
+│                  functions in each), the port implementations (adapters.rs), and settings.txt
+│                  and brains.txt (files.rs). Depends on domain, rendering and application.
+└── ui/            presentation: the winit loop, frame pump, sprite views, tray menu, cards and
+                   dialogs. Depends on domain, rendering and application, but never on platform.
+src/main.rs        the composition root: picks the adapters, plugs them into the ports, runs the UI
+tools/
+├── cs2rs/         the translator used for the migration
+├── compare/       checks this port against the C# original
+└── hash.rs, sim_trace.rs
+```
+
+**Adding an OS capability.** Declare it on the port that needs it (usually `Desktop` in
+`crates/application/src/ports.rs`), add the function to all three backends, and forward to it in
+`crates/platform/src/adapters.rs`. The UI and the use cases only ever call the port.
+
+**Translated code.** `crates/domain/` (except `lib.rs`), `crates/rendering/` (except `lib.rs`,
+`render_thread.rs` and `sprite_sink.rs`) and `settings.rs` were
+produced from the C# by `tools/cs2rs/cs2rs.py`, which keeps statement order so floating-point
+results stay identical. These files are the source now: edit them directly. The translator is
+kept as a record of how they were made. Rerunning it overwrites them, and its output uses the old
+single-crate layout.
+
+**The object model.** The cast is an object graph, with walkers holding each other and calling
+each other re-entrantly. So a C# class became a `Copy` handle to heap data (see the top of
+`crates/domain/src/rt.rs`), and methods take the handle by value. This uses `unsafe` internally and is not
+idiomatic Rust. It is safe in practice because the cast is only touched from the UI thread, and
+each painter from its own thread, but the compiler does not enforce that. Rewriting the
+simulation around indices would be the next step if it needs to become idiomatic.
+
+**Test switches.** `IDLEWALKER_TEST=1` leaves the sign-in entry and the legacy registry alone,
+skips the single-instance check, and on Windows keeps sprites capturable.
+`IDLEWALKER_TEST_MENU=about,brains` fires menu items at start-up.
+
+## Checking the port
+
+`tools/compare/compare.sh /path/to/the/C#/checkout` (Windows, Git Bash) builds both versions and
+compares them:
+
+- **Painters:** an FNV hash of the painted canvas for 810 poses across all four figures, which
+  must be byte-identical.
+- **Behaviour:** a seeded 10-minute simulation of all 22 walkers, printing every walker's activity
+  and position every 10 seconds, then what each has learned. Those must match. The line's running
+  hash of raw doubles may differ in its last bits, because `exp` and `pow` come from a different
+  maths library; that noise has not been seen to change a decision.
+
+## Releasing
+
+`.github/workflows/build.yml` builds and self-tests on Windows, Linux and macOS (Apple Silicon and
+Intel) on every push and pull request. Pushing a `v*` tag does the same and then publishes a GitHub
+release. You never edit the version by hand: the tag is the version.
+
+```sh
+git checkout main && git pull
+git push                  # what you release must already be on the default branch
+git tag v1.2.3
+git push origin v1.2.3
+```
+
+| Tag                 | Published as | Accepted                          |
+| ------------------- | ------------ | --------------------------------- |
+| `v1.2.3`          | release      | yes                               |
+| `v1.2.3-beta.1`   | pre-release  | yes                               |
+| `1.2.3`, `v1.2` | -            | no: the run fails before building |
+
+A release has `idlewalker-<version>-windows-x64.zip`, `-linux-x64.zip`, `-macos.zip` (a universal
+app), and a `SHA256SUMS` file. Every zip holds the app, `README.md`, `LICENSE`,
+`THIRD_PARTY_NOTICES.md` and the `LICENSES/` folder. The run fails, and nothing is published, if
+the tag is malformed, the tagged commit is not on the default branch, a self-test fails on any OS,
+a binary does not report the tagged version (`idlewalker --version`), the Linux binary does not
+run cleanly on glibc 2.28, or the packaged macOS app is not universal and validly signed.
+
+To release without pushing a tag, or to rebuild one, use **Run workflow** on the Actions tab and
+enter the tag; it is created on the selected commit if it does not exist.
+
+To fix a bad release, delete it on GitHub and delete the tag (`git tag -d v1.2.3` and
+`git push origin :refs/tags/v1.2.3`), or simply release the next patch version.
+
+Binaries are unsigned: macOS Gatekeeper and Windows SmartScreen will warn until they are signed.
+

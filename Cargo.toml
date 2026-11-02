@@ -1,0 +1,67 @@
+# The version lives here once, for every crate; tools/release/stamp-version.sh rewrites
+# this first `version = ` line from the release tag.
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+repository = "https://github.com/i-oms/IdleWalker"
+
+# Clean Architecture: each crate may depend only on the crates further in, and the
+# compiler enforces it.
+#   domain       entities: the cast, its runtime and its settings (no dependencies)
+#   rendering    presenter: walkers -> pixels                    (domain)
+#   application  use cases and the ports they need               (domain)
+#   platform     adapters: per-OS services, files, network       (domain, rendering, application)
+#   ui           the winit/tray presentation                      (domain, rendering, application)
+#   idlewalker   the composition root: the only crate that knows them all
+[workspace]
+members = ["crates/*"]
+resolver = "2"
+
+[workspace.dependencies]
+idlewalker-domain = { path = "crates/domain" }
+idlewalker-rendering = { path = "crates/rendering" }
+idlewalker-application = { path = "crates/application" }
+idlewalker-platform = { path = "crates/platform" }
+idlewalker-ui = { path = "crates/ui" }
+
+[package]
+name = "idlewalker"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "A tiny desktop companion: characters stroll along the bottom of your screens while the mouse rests."
+readme = "README.md"
+keywords = ["desktop-pet", "desktop-companion", "tray", "animation"]
+categories = ["games"]
+
+[[bin]]
+name = "idlewalker"
+path = "src/main.rs"
+
+[[bin]]
+name = "hash"
+path = "tools/hash.rs"
+
+[[bin]]
+name = "sim_trace"
+path = "tools/sim_trace.rs"
+
+[dependencies]
+idlewalker-domain.workspace = true
+idlewalker-rendering.workspace = true
+idlewalker-application.workspace = true
+idlewalker-platform.workspace = true
+idlewalker-ui.workspace = true
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = true
+
+# C# integer arithmetic wraps; the translated code relies on it.
+[profile.dev]
+overflow-checks = false
+opt-level = 1

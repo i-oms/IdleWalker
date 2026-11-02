@@ -1,0 +1,9 @@
+[package]
+name = "idlewalker-domain"
+description = "IdleWalker's entities: the cast, its behaviour and the runtime under it. No dependencies."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]

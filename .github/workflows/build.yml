@@ -1,0 +1,222 @@
+name: Build and Release
+
+# Every push and pull request is built and tested on all three OSes.
+# A v* tag does the same, then publishes a GitHub release. The tag is the version.
+on:
+  push:
+    branches: [main, master]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag (e.g. v1.2.3). Created on the selected commit if it does not exist yet."
+        required: true
+
+concurrency:
+  group: build-${{ github.event.inputs.tag || github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  IS_RELEASE: ${{ startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch' }}
+  TAG: ${{ github.event.inputs.tag || github.ref_name }}
+
+jobs:
+  check-tag:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.tag.outputs.version }}
+      prerelease: ${{ steps.tag.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: tag
+        name: Validate the tag
+        if: env.IS_RELEASE == 'true'
+        run: |
+          version=$(sh tools/release/stamp-version.sh --check "$TAG")
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          case "$version" in
+            *-*) echo "prerelease=true" >> "$GITHUB_OUTPUT" ;;
+            *) echo "prerelease=false" >> "$GITHUB_OUTPUT" ;;
+          esac
+      - name: Require the commit to be on the default branch
+        if: env.IS_RELEASE == 'true'
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          git merge-base --is-ancestor HEAD "origin/$DEFAULT_BRANCH" || {
+            echo "::error::$(git rev-parse HEAD) is not on origin/$DEFAULT_BRANCH"
+            exit 1
+          }
+
+  build:
+    needs: check-tag
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: windows-latest, platform: windows-x64 }
+          - { os: ubuntu-latest, platform: linux-x64 }
+          - { os: macos-latest, platform: macos-arm64 }
+          - { os: macos-15-intel, platform: macos-x64 }
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ matrix.platform }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: ${{ matrix.platform }}-
+
+      - name: Stamp the tag's version
+        if: env.IS_RELEASE == 'true'
+        run: sh tools/release/stamp-version.sh "$TAG"
+
+      - name: Self-test
+        run: cargo test --release --test selftest
+
+      - name: Build
+        if: runner.os != 'Linux'
+        run: cargo build --release --bin idlewalker
+
+      # Linked against an old glibc, because a binary only runs on a glibc at least as new as
+      # the one it was linked against, and the runner's is recent. A later step checks it.
+      - name: Build (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          python3 -m pip install --user --break-system-packages cargo-zigbuild==0.24.0 ziglang==0.16.0
+          export PATH="$HOME/.local/bin:$PATH"
+          cargo zigbuild --release --locked --bin idlewalker --target x86_64-unknown-linux-gnu.2.28
+          cp target/x86_64-unknown-linux-gnu/release/idlewalker target/release/idlewalker
+
+      - name: Check the binary runs on an old Linux
+        if: runner.os == 'Linux'
+        run: |
+          # Pulled separately so that docker's progress messages stay out of the output read below.
+          docker pull -q debian:10
+          # Debian 10 has glibc 2.28. A newer symbol can be only a warning, so read the output too.
+          got=$(docker run --rm -v "$PWD/target/release/idlewalker:/idlewalker:ro" debian:10 /idlewalker --version 2>&1)
+          echo "$got"
+          case "$got" in
+            idlewalker\ *) ;;
+            *) echo "::error::the binary does not run cleanly on glibc 2.28"; exit 1 ;;
+          esac
+          [ "$(printf '%s\n' "$got" | wc -l)" = 1 ]
+
+      - name: Check the binary carries the version
+        if: env.IS_RELEASE == 'true'
+        env:
+          VERSION: ${{ needs.check-tag.outputs.version }}
+        run: |
+          got=$(target/release/idlewalker --version | tr -d '\r')
+          echo "$got"
+          [ "$got" = "idlewalker $VERSION" ]
+
+      - name: Package
+        env:
+          VERSION: ${{ needs.check-tag.outputs.version || github.sha }}
+          PLATFORM: ${{ matrix.platform }}
+        run: |
+          mkdir -p dist staging
+          base="idlewalker-$VERSION-$PLATFORM"
+
+          # Python's zipfile writes portable forward-slash paths; zip(1) is not on Windows,
+          # and Compress-Archive writes backslashes that other systems cannot extract.
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            py=python
+          else
+            py=python3
+          fi
+
+          case "$RUNNER_OS" in
+            Windows)
+              pkg="staging/$base"
+              mkdir -p "$pkg"
+              cp target/release/idlewalker.exe "$pkg/idlewalker.exe"
+              cp README.md LICENSE THIRD_PARTY_NOTICES.md "$pkg/"
+              cp -R LICENSES "$pkg/"
+              (cd staging && "$py" -m zipfile -c "../dist/$base.zip" "$base")
+              ;;
+            Linux)
+              pkg="staging/$base"
+              mkdir -p "$pkg"
+              cp target/release/idlewalker "$pkg/idlewalker"
+              cp README.md LICENSE THIRD_PARTY_NOTICES.md "$pkg/"
+              cp -R LICENSES "$pkg/"
+              (cd staging && "$py" -m zipfile -c "../dist/$base.zip" "$base")
+              ;;
+            macOS)
+              # Not a download yet: the macos job joins both of these into one app.
+              cp target/release/idlewalker "dist/idlewalker-$PLATFORM"
+              ;;
+          esac
+
+          if [ "$RUNNER_OS" != "macOS" ]; then
+            # The zip must carry the documents it was asked to ship with.
+            "$py" -m zipfile -l "dist/$base.zip" | grep -q README.md
+            "$py" -m zipfile -l "dist/$base.zip" | grep -q LICENSE
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ runner.os == 'macOS' && 'thin' || 'release' }}-${{ matrix.platform }}
+          path: dist/*
+          if-no-files-found: error
+
+  macos:
+    needs: [check-tag, build]
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: thin-macos-*
+          path: thin
+          merge-multiple: true
+      - name: Package
+        env:
+          VERSION: ${{ needs.check-tag.outputs.version || github.sha }}
+        run: |
+          chmod +x thin/*
+          sh tools/release/package-macos.sh "$VERSION" thin/idlewalker-macos-arm64 thin/idlewalker-macos-x64 dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-macos
+          path: dist/*
+          if-no-files-found: error
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+    needs: [check-tag, build, macos]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          path: dist
+          merge-multiple: true
+      - name: Checksums
+        working-directory: dist
+        run: sha256sum idlewalker-* > SHA256SUMS
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.TAG }}
+          target_commitish: ${{ github.sha }}
+          files: dist/*
+          fail_on_unmatched_files: true
+          generate_release_notes: true
+          prerelease: ${{ needs.check-tag.outputs.prerelease == 'true' }}
