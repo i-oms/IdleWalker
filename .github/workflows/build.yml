@@ -15,7 +15,8 @@ on:
 
 concurrency:
   group: build-${{ github.event.inputs.tag || github.ref }}
-  cancel-in-progress: false
+  # A new push to a PR replaces its previous run; a release must never be cancelled.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
@@ -83,6 +84,9 @@ jobs:
       - name: Stamp the tag's version
         if: env.IS_RELEASE == 'true'
         run: sh tools/release/stamp-version.sh "$TAG"
+
+      - name: Unit tests
+        run: cargo test --release --workspace --lib
 
       - name: Self-test
         run: cargo test --release --test selftest
@@ -177,7 +181,9 @@ jobs:
 
   macos:
     needs: [check-tag, build]
-    runs-on: macos-latest
+    # Packaging only uses lipo/sips/codesign/ditto, which work on either architecture.
+    # macos-latest is the busy macOS 26 arm64 pool; the Intel image schedules promptly.
+    runs-on: macos-15-intel
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4

@@ -7,11 +7,12 @@ please open an issue first so we can agree on the approach.
 
 ```sh
 cargo build --release
+cargo test --release --workspace --lib
 cargo test --release --test selftest
 ```
 
-Run the self-test before opening a pull request. CI runs it on Windows, Linux and macOS. The
-[README](README.md#how-it-is-built) explains how the code is laid out.
+Run the unit tests and the self-test before opening a pull request. CI runs them on Windows,
+Linux and macOS. The [README](README.md#how-it-is-built) explains how the code is laid out.
 
 `IDLEWALKER_TEST=1` is useful while developing: it leaves your sign-in entry alone and skips the
 single-instance check.
