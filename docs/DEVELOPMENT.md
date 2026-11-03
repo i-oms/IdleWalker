@@ -125,8 +125,8 @@ compares them:
 ## Releasing
 
 `.github/workflows/build.yml` builds and self-tests on Windows, Linux and macOS (Apple Silicon and
-Intel) on every push and pull request. Pushing a `v*` tag does the same and then publishes a GitHub
-release. You never edit the version by hand: the tag is the version.
+Intel) on every pull request and every `v*` tag; a tag then publishes a GitHub release. Pushing to
+another branch builds nothing. You never edit the version by hand: the tag is the version.
 
 ```sh
 git checkout main && git pull

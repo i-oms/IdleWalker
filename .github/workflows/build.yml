@@ -1,10 +1,10 @@
 name: Build and Release
 
-# Every push and pull request is built and tested on all three OSes.
-# A v* tag does the same, then publishes a GitHub release. The tag is the version.
+# Pull requests are built and tested on all three OSes. A v* tag does the same,
+# then publishes a GitHub release. Ordinary pushes to a branch build nothing.
+# The tag is the version.
 on:
   push:
-    branches: [main, master]
     tags: ["v*"]
   pull_request:
   workflow_dispatch:
