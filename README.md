@@ -29,12 +29,9 @@
   <a href="docs/DEVELOPMENT.md">Developers</a>
 </p>
 
-<!--
-  TODO: add a demo GIF here. It is the most useful thing a README can have.
-  Record 5 to 10 seconds of walkers peeking out, strolling, and diving away when the mouse moves.
-  Save it as assets/demo.gif (keep it under about 5 MB), then replace this comment with:
-  <p align="center"><img src="assets/demo.gif" width="720" alt="IdleWalker in action"></p>
--->
+<p align="center">
+  <img src="assets/demo.gif" width="100%" alt="IdleWalker's walkers strolling along the bottom of the screen">
+</p>
 
 ---
 
