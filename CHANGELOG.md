@@ -18,6 +18,9 @@ Notable changes are recorded here. The format follows
 - The painter on macOS no longer drops to the efficiency cores on Apple Silicon.
 - Painting runs on two threads where there are cores to spare, and the paint budget no
   longer flips the frame rate back and forth when the demand hovers near it.
+- On macOS with displays of different scaling, tray panels no longer open in the wrong place
+  or close when clicked.
+- On macOS, each brightness slider now uses the same display number as the card on that monitor.
 
 ### Added
 
@@ -36,12 +39,6 @@ Notable changes are recorded here. The format follows
 
 - Linux downloads are now a single executable that runs on glibc 2.28 and later, instead of a
   tar archive that needed glibc 2.34.
-- macOS downloads are now one disk image with a universal `IdleWalker.app`, instead of a tar
+- macOS downloads are now one zip holding a universal `IdleWalker.app`, instead of a tar
   archive per CPU type.
 - On macOS, a click on the status bar icon now opens the brightness panel.
-
-### Fixed
-
-- On macOS with displays of different scaling, tray panels no longer open in the wrong place
-  or close when clicked.
-- On macOS, each brightness slider now uses the same display number as the card on that monitor.

@@ -6,7 +6,13 @@
 //!
 //! All coordinates are "world pixels": y grows downward from the top of the primary
 //! display, and a monitor's `scale` says how big one cell is drawn there.
-#![allow(warnings)]
+// Style lints only: the FFI declarations keep the OS's own type names, and the adapters
+// are built by the composition root, not by `Default`. Compiler warnings are not silenced.
+#![allow(
+    clippy::upper_case_acronyms,
+    clippy::type_complexity,
+    clippy::new_without_default
+)]
 mod adapters;
 mod files;
 pub use adapters::{sprite_factory, CurlReleaseFeed, NativeDesktop, SystemClock, TempFileJournal};

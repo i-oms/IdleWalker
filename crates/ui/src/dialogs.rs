@@ -776,7 +776,7 @@ pub struct BrainDialog {
     confirm: bool,
 }
 
-fn row_of(mut w: Walker) -> Row {
+fn row_of(w: Walker) -> Row {
     let (t, fr, exp) = (w.learned_entries(), w.friendships(), w.experience());
     let (avg, net) = (w.avg_reward(), w.mlp_weight_norm());
     Row {
@@ -822,7 +822,7 @@ impl BrainDialog {
         f: &mut Font,
         m: &Mouse,
         s: f64,
-        mut troupe: Troupe,
+        troupe: Troupe,
         services: &Services,
     ) -> Outcome {
         c.clear(gfx::BACK);

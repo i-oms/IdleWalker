@@ -53,13 +53,13 @@ fn main() {
         let scale = 3;
         let (width, height) = (40 * scale, anatomies[l].canvas_rows * scale);
         for yi in 0..yaws.len() {
-            for pi in 0..phases.len() {
+            for (pi, &phase) in phases.iter().enumerate() {
                 for fi in 0..faces.len() {
                     let mut pose = Pose::standing();
                     pose.face = faces[fi];
                     pose.yaw = yaws[yi];
                     pose.walking = pi > 0;
-                    pose.walk_phase = phases[pi];
+                    pose.walk_phase = phase;
                     pose.gaze_x = 0.25 * yi as f64 - 0.5;
                     pose.gaze_y = 0.1 * fi as f64;
                     pose.lean = 0.1 * pi as f64;

@@ -6,8 +6,7 @@
 #![allow(non_upper_case_globals)]
 use super::{BrightnessInfo, Screen};
 use crate::prelude::*;
-use objc2::rc::Retained;
-use objc2::runtime::{AnyClass, AnyObject, Bool};
+use objc2::runtime::AnyObject;
 use objc2::{class, msg_send};
 use objc2_foundation::{NSPoint, NSRect, NSSize};
 use std::ffi::{c_void, CString};
@@ -18,7 +17,6 @@ type Id = *mut AnyObject;
 #[link(name = "CoreGraphics", kind = "framework")]
 extern "C" {
     fn CGColorSpaceCreateDeviceRGB() -> *mut c_void;
-    fn CGColorSpaceRelease(c: *mut c_void);
     fn CGDataProviderCreateWithData(
         info: *mut c_void,
         data: *const c_void,
@@ -48,8 +46,12 @@ extern "C" {
 #[link(name = "CoreFoundation", kind = "framework")]
 extern "C" {
     fn CFRelease(o: *const c_void);
-    fn CFStringGetCString(s: *const c_void, out: *mut std::ffi::c_char, size: isize, enc: u32)
-        -> u8;
+    fn CFStringGetCString(
+        s: *const c_void,
+        out: *mut std::ffi::c_char,
+        size: isize,
+        enc: u32,
+    ) -> u8;
 }
 #[link(name = "IOKit", kind = "framework")]
 extern "C" {
@@ -86,11 +88,6 @@ const kCGEventFlagMaskCommand: u64 = 0x100000;
 const kCGEventFlagMaskSecondaryFn: u64 = 0x800000;
 
 pub(crate) fn hide_console(_c: &mut std::process::Command) {}
-
-unsafe fn cls(name: &str) -> &'static AnyClass {
-    let c = CString::new(name).unwrap();
-    AnyClass::get(c.as_c_str()).expect("AppKit class")
-}
 
 // ---- The process -------------------------------------------------------------------
 
@@ -1181,7 +1178,7 @@ impl SpriteWindow {
 
     /// Shows the surface with its top-left corner at (x, y). Only the part that has
     /// content is uploaded; it is placed where it belongs inside the canvas-sized window.
-    pub fn present(&mut self, mut surface: Surface, x: i32, y: i32) {
+    pub fn present(&mut self, surface: Surface, x: i32, y: i32) {
         let mut b = surface.bounds();
         if b.is_empty() {
             b = Rectangle::new(0, 0, 1, 1);

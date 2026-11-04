@@ -12,7 +12,7 @@ cargo test --release --test selftest
 ```
 
 Run the unit tests and the self-test before opening a pull request. CI runs them on Windows,
-Linux and macOS. The [README](README.md#how-it-is-built) explains how the code is laid out.
+Linux and macOS. [DEVELOPMENT.md](docs/DEVELOPMENT.md#how-it-is-built) explains how the code is laid out.
 
 `IDLEWALKER_TEST=1` is useful while developing: it leaves your sign-in entry alone and skips the
 single-instance check.
@@ -36,7 +36,8 @@ single-instance check.
 ## Pull requests
 
 - Keep each pull request to one change, and say how you tested it and on which OS.
-- If a feature behaves differently across OSes, update the table in the README.
+- If a feature behaves differently across OSes, update the platform table in
+  [DEVELOPMENT.md](docs/DEVELOPMENT.md#platform-differences).
 - Add a line to the `Unreleased` section of [CHANGELOG.md](CHANGELOG.md) for anything users notice.
 
 By contributing, you agree that your contribution is licensed under the [MIT License](LICENSE).
