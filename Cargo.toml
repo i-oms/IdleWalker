@@ -33,6 +33,8 @@ license.workspace = true
 repository.workspace = true
 description = "A tiny desktop companion: characters stroll along the bottom of your screens while the mouse rests."
 readme = "README.md"
+# `cargo run` and `cargo install` mean the app, not the port-checking tools beside it.
+default-run = "idlewalker"
 keywords = ["desktop-pet", "desktop-companion", "tray", "animation"]
 categories = ["games"]
 

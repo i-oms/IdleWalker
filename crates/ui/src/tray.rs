@@ -275,13 +275,14 @@ pub fn logo_rgba(size: u32) -> Vec<u8> {
                     n += 1;
                 }
             }
-            let i = (y * s + x) * 4;
-            if a > 0 {
-                out[i] = (r / a) as u8;
-                out[i + 1] = (g / a) as u8;
-                out[i + 2] = (b / a) as u8;
-                out[i + 3] = (a / n) as u8;
+            if a == 0 {
+                continue; // fully transparent: leave the zeroed pixel
             }
+            let i = (y * s + x) * 4;
+            out[i] = (r / a) as u8;
+            out[i + 1] = (g / a) as u8;
+            out[i + 2] = (b / a) as u8;
+            out[i + 3] = (a / n) as u8;
         }
     }
     out
@@ -369,7 +370,7 @@ mod backend {
             let size = 32;
             // The protocol wants ARGB, network byte order.
             let mut data = logo_rgba(size as u32);
-            for p in data.chunks_exact_mut(4) {
+            for p in data.as_chunks_mut::<4>().0 {
                 p.rotate_right(1);
             }
             vec![ksni::Icon {

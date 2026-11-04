@@ -2,7 +2,13 @@
 //! the tray menu, the cards and the dialogs. What happens each frame is the
 //! `Session`'s business; this crate shows it, and turns clicks into its commands. It
 //! never names an OS service: they all arrive as ports from the composition root.
-#![allow(warnings)]
+// Style lints only: the painters take their geometry as plain arguments, and the index
+// loops mirror the rows they draw. Compiler warnings are not silenced.
+#![allow(
+    clippy::too_many_arguments,
+    clippy::new_without_default,
+    clippy::needless_range_loop
+)]
 pub mod dialogs;
 pub mod gfx;
 pub mod menu_panel;

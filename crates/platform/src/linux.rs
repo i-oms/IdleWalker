@@ -18,7 +18,6 @@ use x11rb::protocol::shape::{self, ConnectionExt as _};
 use x11rb::protocol::xproto::*;
 use x11rb::protocol::xtest::ConnectionExt as _;
 use x11rb::rust_connection::RustConnection;
-use x11rb::wrapper::ConnectionExt as _;
 
 struct X {
     conn: RustConnection,
@@ -349,7 +348,6 @@ pub const CORNER_ACTION_NAMES: [&str; 10] = [
     "Call the Minions",
 ];
 
-const KEY_ESC: u8 = 9;
 const KEY_LCTRL: u8 = 37;
 const KEY_LALT: u8 = 64;
 const KEY_LSUPER: u8 = 133;
@@ -669,7 +667,7 @@ impl SpriteWindow {
 
     /// Shows the surface with its top-left corner at (x, y). Only the part that has
     /// content is uploaded and shown; the window shrinks to fit it.
-    pub fn present(&mut self, mut surface: Surface, px: i32, py: i32) {
+    pub fn present(&mut self, surface: Surface, px: i32, py: i32) {
         let (Some(win), Some(x)) = (self.win, x()) else {
             return;
         };

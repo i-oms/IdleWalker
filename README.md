@@ -148,7 +148,7 @@ native Wayland windows, so idle detection and hot corners are less reliable ther
 | OS | Needs |
 | --- | --- |
 | Windows | Windows 10 1703 or later. Nothing to install. |
-| macOS | Nothing to install. Run it from Applications, not from the opened disk image, or *Start at login* will point at a path that goes away. Hot corners that send keys ask for the Accessibility permission. |
+| macOS | Nothing to install. Run it from Applications, not from the unzipped folder, or *Start at login* will point at a path that may go away. Hot corners that send keys ask for the Accessibility permission. |
 | Linux | glibc 2.28+ (Debian 10 / Ubuntu 20.04 and newer), X11 or XWayland with a compositing window manager. For the tray icon, StatusNotifierItem support (KDE, or GNOME with the AppIndicator extension). Optional: `ddcutil` for external monitor brightness and `brightnessctl` for the built-in panel. |
 </details>
 

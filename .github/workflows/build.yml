@@ -86,14 +86,14 @@ jobs:
         run: sh tools/release/stamp-version.sh "$TAG"
 
       - name: Unit tests
-        run: cargo test --release --workspace --lib
+        run: cargo test --release --locked --workspace --lib
 
       - name: Self-test
-        run: cargo test --release --test selftest
+        run: cargo test --release --locked --test selftest
 
       - name: Build
         if: runner.os != 'Linux'
-        run: cargo build --release --bin idlewalker
+        run: cargo build --release --locked --bin idlewalker
 
       # Linked against an old glibc, because a binary only runs on a glibc at least as new as
       # the one it was linked against, and the runner's is recent. A later step checks it.

@@ -4,9 +4,9 @@
 #![allow(non_snake_case, non_camel_case_types)]
 use super::{BrightnessInfo, Screen};
 use crate::prelude::*;
+use std::collections::HashMap;
 use std::ffi::c_void;
 use std::os::windows::process::CommandExt;
-use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock};
 
@@ -924,8 +924,14 @@ impl Wmi {
     /// The first object a WQL query returns.
     fn first(&self, wql: &str) -> Option<Com> {
         unsafe {
-            type ExecQuery =
-                unsafe extern "system" fn(*mut c_void, *mut u16, *mut u16, i32, *mut c_void, Out) -> i32;
+            type ExecQuery = unsafe extern "system" fn(
+                *mut c_void,
+                *mut u16,
+                *mut u16,
+                i32,
+                *mut c_void,
+                Out,
+            ) -> i32;
             type Next = unsafe extern "system" fn(*mut c_void, i32, u32, Out, *mut u32) -> i32;
             let (lang, q) = (Bstr::new("WQL"), Bstr::new(wql));
             let mut e = NUL;
@@ -941,8 +947,14 @@ impl Wmi {
     }
 
     fn get(obj: &Com, name: &str) -> Option<VARIANT> {
-        type Get =
-            unsafe extern "system" fn(*mut c_void, *const u16, i32, *mut VARIANT, *mut i32, *mut i32) -> i32;
+        type Get = unsafe extern "system" fn(
+            *mut c_void,
+            *const u16,
+            i32,
+            *mut VARIANT,
+            *mut i32,
+            *mut i32,
+        ) -> i32;
         let mut v = VARIANT {
             vt: 0,
             _reserved: [0; 3],
@@ -954,7 +966,8 @@ impl Wmi {
     }
 
     fn put(obj: &Com, name: &str, vt: u16, value: usize) -> bool {
-        type Put = unsafe extern "system" fn(*mut c_void, *const u16, i32, *mut VARIANT, i32) -> i32;
+        type Put =
+            unsafe extern "system" fn(*mut c_void, *const u16, i32, *mut VARIANT, i32) -> i32;
         let mut v = VARIANT {
             vt,
             _reserved: [0; 3],
@@ -974,17 +987,33 @@ impl Wmi {
             let path = Bstr(p.data[0] as *mut u16); // ownership moves to the Bstr
             type GetObject =
                 unsafe extern "system" fn(*mut c_void, *mut u16, i32, *mut c_void, Out, Out) -> i32;
-            type GetMethod = unsafe extern "system" fn(*mut c_void, *const u16, i32, Out, Out) -> i32;
+            type GetMethod =
+                unsafe extern "system" fn(*mut c_void, *const u16, i32, Out, Out) -> i32;
             type SpawnInstance = unsafe extern "system" fn(*mut c_void, i32, Out) -> i32;
             let name = Bstr::new("WmiMonitorBrightnessMethods");
             let mut class = NUL;
-            if slot::<GetObject>(self.svc.0, 6)(self.svc.0, name.0, 0, NUL, &mut class, std::ptr::null_mut()) < 0 {
+            if slot::<GetObject>(self.svc.0, 6)(
+                self.svc.0,
+                name.0,
+                0,
+                NUL,
+                &mut class,
+                std::ptr::null_mut(),
+            ) < 0
+            {
                 return None;
             }
             let class = Com(class);
             let (mut in_def, mut out_def) = (NUL, NUL);
             let method = w("WmiSetBrightness");
-            if slot::<GetMethod>(class.0, 19)(class.0, method.as_ptr(), 0, &mut in_def, &mut out_def) < 0 {
+            if slot::<GetMethod>(class.0, 19)(
+                class.0,
+                method.as_ptr(),
+                0,
+                &mut in_def,
+                &mut out_def,
+            ) < 0
+            {
                 return None;
             }
             let (in_def, _out_def) = (Com(in_def), Com(out_def));
@@ -1002,7 +1031,8 @@ impl Wmi {
     }
 
     fn brightness(&self) -> Option<i32> {
-        let o = self.first("SELECT CurrentBrightness FROM WmiMonitorBrightness WHERE Active=TRUE")?;
+        let o =
+            self.first("SELECT CurrentBrightness FROM WmiMonitorBrightness WHERE Active=TRUE")?;
         let mut v = Self::get(&o, "CurrentBrightness")?;
         let r = match v.vt {
             VT_UI1 => Some((v.data[0] & 0xFF) as i32),
@@ -1193,7 +1223,10 @@ pub fn brightness_write(key: &str, percent: i32) {
             for (j, p) in physical_monitors(m).into_iter().enumerate() {
                 unsafe {
                     // The range learned at enumeration; only a monitor not seen then is read.
-                    let known = ddc_ranges().lock().ok().and_then(|r| r.get(&(i, j)).copied());
+                    let known = ddc_ranges()
+                        .lock()
+                        .ok()
+                        .and_then(|r| r.get(&(i, j)).copied());
                     let (mut lo, mut cur, mut hi) = (0, 0, 0);
                     if let Some(r) = known {
                         (lo, hi) = r;
@@ -1334,7 +1367,7 @@ impl SpriteWindow {
 
     /// Shows the surface with its top-left corner at (x, y). Only the part that has
     /// content is uploaded and shown; the window shrinks to fit it.
-    pub fn present(&mut self, mut surface: Surface, x: i32, y: i32) {
+    pub fn present(&mut self, surface: Surface, x: i32, y: i32) {
         let (sw, sh) = (surface.width(), surface.height());
         self.ensure_bitmap(sw, sh);
         if self.dib == 0 {
