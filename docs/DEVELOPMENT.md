@@ -41,7 +41,7 @@ The C# version leaned on Windows-only behaviour. Not all of it exists elsewhere:
 | Terminal prompt: install and update   | winget, else the install script | Homebrew, else the install script into `~/.local/bin` | The install script into `~/.local/bin` (needs `curl` and `unzip`) | Same as X11 |
 | Terminal prompt: uninstall            | winget, scoop or Chocolatey as installed, else its folder is deleted | Homebrew, else the binary is deleted | The binary is deleted; one under `/usr/local` needs `sudo`, which it says | Same as X11 |
 | Terminal prompt: shells               | PowerShell 7, Windows PowerShell, Git Bash, cmd (Clink), nu | zsh, bash, fish, PowerShell, nu | bash, zsh, fish, PowerShell, nu | Same as X11 |
-| Terminal prompt: terminal font        | VS Code family, Windows Terminal | VS Code family; Terminal.app and iTerm2 by hand | VS Code family, GNOME Terminal; others by hand | Same as X11 |
+| Terminal prompt: terminal font        | VS Code family, Windows Terminal, the console host (`HKCU\Console`) | VS Code family, Terminal (AppleScript, may ask for Automation permission), iTerm2 (`defaults export`/`import`, iTerm2 must be closed) | VS Code family, GNOME Terminal (`gsettings`), Konsole (its profile file) | Same as X11 |
 
 Differences on every OS, compared with the C# version:
 

@@ -18,6 +18,11 @@ const THEMES_ZIP: &str = "https://cdn.ohmyposh.dev/releases/latest/themes.zip";
 const INSTALL_SH: &str = "https://ohmyposh.dev/install.sh";
 const INSTALL_PS1: &str = "https://ohmyposh.dev/install.ps1";
 pub const FONT_NAME: &str = "MesloLGM Nerd Font";
+/// The same font with every icon squeezed to one cell: what the terminals that cannot
+/// cope with wide glyphs (Terminal.app, iTerm2, the Windows console) are given.
+pub const FONT_MONO: &str = "MesloLGM Nerd Font Mono";
+/// How macOS names that font internally.
+const FONT_MONO_POSTSCRIPT: &str = "MesloLGMNerdFontMono-Regular";
 const FONT_PACKAGE: &str = "meslo";
 const WINGET_ID: &str = "JanDeDobbeleer.OhMyPosh";
 const CLINK_WINGET_ID: &str = "chrisant996.Clink";
@@ -97,14 +102,19 @@ pub struct Theme {
 pub enum TerminalKind {
     VsCode,
     WindowsTerminal,
+    /// The classic console window cmd and PowerShell open in outside Windows Terminal.
+    ConsoleHost,
     GnomeTerminal,
+    Konsole,
+    AppleTerminal,
+    ITerm2,
 }
 
 #[derive(Clone, Debug)]
 pub struct TerminalStatus {
     pub name: String,
     pub kind: TerminalKind,
-    /// The settings file, or the GNOME profile id.
+    /// The settings file, or the profile the terminal calls its default.
     pub target: String,
     pub font_set: bool,
 }
@@ -124,6 +134,8 @@ pub struct Status {
     pub clink: Option<PathBuf>,
     /// How an install or update would be done.
     pub installer: &'static str,
+    /// What this OS's terminals need to know about the font and colours.
+    pub terminal_note: &'static str,
 }
 
 impl Status {
@@ -882,6 +894,20 @@ impl Posh {
                 });
             }
         }
+        if self.os() == Os::Windows {
+            // HKCU\Console is what every console window starts from.
+            let face = self
+                .ws
+                .find_program("reg")
+                .and_then(|reg| self.ask(&reg, &["query", r"HKCU\Console", "/v", "FaceName"]))
+                .unwrap_or_default();
+            out.push(TerminalStatus {
+                name: "Console windows (cmd, PowerShell)".into(),
+                kind: TerminalKind::ConsoleHost,
+                target: String::new(),
+                font_set: face.contains("Nerd Font"),
+            });
+        }
         if self.os() == Os::Linux {
             if let Some(gsettings) = self.ws.find_program("gsettings") {
                 let id = self.ask(
@@ -901,8 +927,92 @@ impl Posh {
                     });
                 }
             }
+            if self.ws.exists(&self.konsolerc()) || self.ws.find_program("konsole").is_some() {
+                let profile = self.konsole_profile();
+                let text = self.ws.read_text(&profile).unwrap_or_default();
+                out.push(TerminalStatus {
+                    name: "Konsole".into(),
+                    kind: TerminalKind::Konsole,
+                    target: profile.display().to_string(),
+                    font_set: ini_get(&text, "Appearance", "Font")
+                        .is_some_and(|f| f.contains("Nerd Font")),
+                });
+            }
+        }
+        if self.os() == Os::MacOs {
+            let defaults = self.ws.find_program("defaults");
+            let profile = defaults
+                .as_deref()
+                .and_then(|d| {
+                    self.ask(
+                        d,
+                        &["read", "com.apple.Terminal", "Default Window Settings"],
+                    )
+                })
+                .unwrap_or_else(|| "Basic".into());
+            let plist = defaults
+                .as_deref()
+                .and_then(|d| self.ask_all(d, &["export", "com.apple.Terminal", "-"]))
+                .unwrap_or_default();
+            out.push(TerminalStatus {
+                name: "Terminal".into(),
+                kind: TerminalKind::AppleTerminal,
+                target: profile.clone(),
+                font_set: apple_terminal_font_has(&plist, &profile, "NerdFont"),
+            });
+            let iterm = home
+                .join("Library")
+                .join("Preferences")
+                .join("com.googlecode.iterm2.plist");
+            if self.ws.exists(&iterm) {
+                let plist = defaults
+                    .as_deref()
+                    .and_then(|d| self.ask_all(d, &["export", "com.googlecode.iterm2", "-"]))
+                    .unwrap_or_default();
+                let fonts = iterm_fonts(&plist);
+                out.push(TerminalStatus {
+                    name: "iTerm2".into(),
+                    kind: TerminalKind::ITerm2,
+                    target: iterm.display().to_string(),
+                    font_set: !fonts.is_empty() && fonts.iter().all(|f| f.contains("NerdFont")),
+                });
+            }
         }
         out
+    }
+
+    /// Everything a program printed, if it succeeded.
+    fn ask_all(&self, program: &Path, args: &[&str]) -> Option<String> {
+        let r = self.run(program, args);
+        r.success.then_some(r.stdout)
+    }
+
+    fn konsolerc(&self) -> PathBuf {
+        self.config_home().join("konsolerc")
+    }
+
+    /// Konsole's default profile file, or the one this program would make for it.
+    fn konsole_profile(&self) -> PathBuf {
+        let rc = self.ws.read_text(&self.konsolerc()).unwrap_or_default();
+        let name = ini_get(&rc, "Desktop Entry", "DefaultProfile")
+            .filter(|n| !n.is_empty())
+            .unwrap_or_else(|| "IdleWalker.profile".into());
+        self.env_dir("XDG_DATA_HOME")
+            .unwrap_or_else(|| self.home().join(".local").join("share"))
+            .join("konsole")
+            .join(name)
+    }
+
+    fn terminal_note(&self) -> &'static str {
+        match self.os() {
+            Os::Windows => "Other terminals: pick \"MesloLGM Nerd Font\" in their own settings.",
+            Os::MacOs => {
+                "Terminal shows only 256 colours, so themes look best in iTerm2 or VS Code. Other terminals: pick \"MesloLGM Nerd Font Mono\" in their settings."
+            }
+            Os::Linux => {
+                "Other terminals (kitty, Alacritty, xfce4-terminal...): pick \"MesloLGM Nerd Font\" in their settings."
+            }
+        }
     }
 
     // ---- The state ----
@@ -924,6 +1034,7 @@ impl Posh {
             font_installed: self.font_installed(),
             terminals: self.terminals(),
             installer: self.installer(),
+            terminal_note: self.terminal_note(),
             binary,
             version,
             latest: None,
@@ -1393,14 +1504,166 @@ impl Posh {
                         log.push("GNOME Terminal: could not set the font.".into());
                     }
                 }
+                TerminalKind::Konsole => {
+                    let profile = PathBuf::from(&t.target);
+                    let text = self.ws.read_text(&profile).unwrap_or_default();
+                    let mut new = text;
+                    if new.is_empty() {
+                        new = "[General]\nName=IdleWalker\nParentProfile=FALLBACK/\n".into();
+                    }
+                    // Qt's font description: family, point size, then its defaults.
+                    new = ini_set(
+                        &new,
+                        "Appearance",
+                        "Font",
+                        &format!("{FONT_NAME},11,-1,5,50,0,0,0,0,0"),
+                    );
+                    match self.ws.write_text(&profile, &new) {
+                        Ok(()) => {
+                            any = true;
+                            log.push(format!("Konsole: font set to {FONT_NAME} in {}.", t.target));
+                            // A profile this program made must also be the default one.
+                            let rc_path = self.konsolerc();
+                            let rc = self.ws.read_text(&rc_path).unwrap_or_default();
+                            if ini_get(&rc, "Desktop Entry", "DefaultProfile")
+                                .is_none_or(|n| n.is_empty())
+                            {
+                                let name = profile
+                                    .file_name()
+                                    .map(|n| n.to_string_lossy().into_owned())
+                                    .unwrap_or_default();
+                                let _ = self.ws.write_text(
+                                    &rc_path,
+                                    &ini_set(&rc, "Desktop Entry", "DefaultProfile", &name),
+                                );
+                            }
+                        }
+                        Err(e) => log.push(format!("Konsole: could not write {}: {e}.", t.target)),
+                    }
+                }
+                TerminalKind::ConsoleHost => {
+                    let Some(reg) = self.ws.find_program("reg") else {
+                        continue;
+                    };
+                    let key = r"HKCU\Console";
+                    let face = self.run(
+                        &reg,
+                        &[
+                            "add", key, "/v", "FaceName", "/t", "REG_SZ", "/d", FONT_MONO, "/f",
+                        ],
+                    );
+                    // 0x36: a TrueType font; 16 pixels tall, width left to the font.
+                    let family = self.run(
+                        &reg,
+                        &[
+                            "add",
+                            key,
+                            "/v",
+                            "FontFamily",
+                            "/t",
+                            "REG_DWORD",
+                            "/d",
+                            "54",
+                            "/f",
+                        ],
+                    );
+                    let size = self.run(
+                        &reg,
+                        &[
+                            "add",
+                            key,
+                            "/v",
+                            "FontSize",
+                            "/t",
+                            "REG_DWORD",
+                            "/d",
+                            "1048576",
+                            "/f",
+                        ],
+                    );
+                    if face.success && family.success && size.success {
+                        any = true;
+                        log.push(format!(
+                            "Console windows: font set to {FONT_MONO} for new windows."
+                        ));
+                    } else {
+                        log.push(
+                            "Console windows: could not change the font in the registry.".into(),
+                        );
+                    }
+                }
+                TerminalKind::AppleTerminal => {
+                    let Some(osascript) = self.ws.find_program("osascript") else {
+                        continue;
+                    };
+                    log.push("Terminal: setting its font (macOS may ask to let IdleWalker control Terminal)...".into());
+                    let set = |which: &str| {
+                        format!("set font name of {which} to \"{FONT_MONO_POSTSCRIPT}\"")
+                    };
+                    let lines = [
+                        "tell application \"Terminal\"".to_string(),
+                        set("default settings"),
+                        set("startup settings"),
+                        set(&format!("settings set \"{}\"", t.target.replace('"', ""))),
+                        "end tell".to_string(),
+                    ];
+                    let script = lines.join("\n");
+                    let r = self.run(&osascript, &["-e", &script]);
+                    if r.success {
+                        any = true;
+                        log.push(format!("Terminal: font set to {FONT_MONO} in its \"{}\" profile. Open a new Terminal window.", t.target));
+                    } else {
+                        log.extend(tail(&r));
+                        log.push(format!("Terminal: could not set the font; pick {FONT_MONO} under Settings > Profiles > Text."));
+                    }
+                }
+                TerminalKind::ITerm2 => {
+                    let (Some(defaults), Some(pgrep)) = (
+                        self.ws.find_program("defaults"),
+                        self.ws.find_program("pgrep"),
+                    ) else {
+                        continue;
+                    };
+                    if self.run(&pgrep, &["-x", "iTerm2"]).success {
+                        log.push("iTerm2: quit iTerm2 first, then set the fonts again; it keeps its own copy of the settings while it runs.".into());
+                        continue;
+                    }
+                    let Some(plist) =
+                        self.ask_all(&defaults, &["export", "com.googlecode.iterm2", "-"])
+                    else {
+                        log.push("iTerm2: could not read its settings.".into());
+                        continue;
+                    };
+                    let (new, n) = iterm_fonts_set(&plist, FONT_MONO_POSTSCRIPT);
+                    if n == 0 {
+                        log.push(
+                            "iTerm2: no profile saved yet; open its settings once, then try again."
+                                .into(),
+                        );
+                        continue;
+                    }
+                    let tmp = self.ws.temp_dir().join("idlewalker-iterm2.plist");
+                    let path = tmp.display().to_string();
+                    let imported = self.ws.write_text(&tmp, &new).is_ok()
+                        && self
+                            .run(&defaults, &["import", "com.googlecode.iterm2", &path])
+                            .success;
+                    self.ws.remove_file(&tmp);
+                    if imported {
+                        any = true;
+                        log.push(format!(
+                            "iTerm2: font set to {FONT_MONO} in {n} profile(s)."
+                        ));
+                    } else {
+                        log.push(format!("iTerm2: could not write its settings; pick {FONT_MONO} under Settings > Profiles > Text."));
+                    }
+                }
             }
         }
         if !any {
-            log.push("No terminal settings found to change.".into());
+            log.push("No terminal settings were changed.".into());
         }
-        log.push(format!(
-            "Other terminals: pick \"{FONT_NAME}\" in their own settings."
-        ));
+        log.push(self.terminal_note().into());
         any
     }
 
@@ -1584,6 +1847,149 @@ impl Posh {
 
 fn gnome_profile(uuid: &str) -> String {
     format!("org.gnome.Terminal.Legacy.Profile:/org/gnome/terminal/legacy/profiles:/:{uuid}/")
+}
+
+// ---- Settings files of other shapes ---------------------------------------------------
+
+/// The value of a key in a section of an INI file (Konsole's profiles and konsolerc).
+fn ini_get(text: &str, section: &str, key: &str) -> Option<String> {
+    let mut inside = false;
+    for line in text.lines() {
+        let l = line.trim();
+        if l.starts_with('[') {
+            inside = l == format!("[{section}]");
+            continue;
+        }
+        if inside {
+            if let Some((k, v)) = l.split_once('=') {
+                if k.trim() == key {
+                    return Some(v.trim().to_string());
+                }
+            }
+        }
+    }
+    None
+}
+
+/// The text with a key set in a section, the section made at the end if it is missing.
+fn ini_set(text: &str, section: &str, key: &str, value: &str) -> String {
+    let header = format!("[{section}]");
+    let mut lines: Vec<String> = text.lines().map(str::to_string).collect();
+    let start = lines.iter().position(|l| l.trim() == header);
+    let Some(start) = start else {
+        if !lines.is_empty() && !lines.last().is_some_and(|l| l.trim().is_empty()) {
+            lines.push(String::new());
+        }
+        lines.push(header);
+        lines.push(format!("{key}={value}"));
+        return lines.join("\n") + "\n";
+    };
+    let end = lines[start + 1..]
+        .iter()
+        .position(|l| l.trim().starts_with('['))
+        .map_or(lines.len(), |p| start + 1 + p);
+    for line in &mut lines[start + 1..end] {
+        if line.split_once('=').is_some_and(|(k, _)| k.trim() == key) {
+            *line = format!("{key}={value}");
+            return lines.join("\n") + "\n";
+        }
+    }
+    lines.insert(start + 1, format!("{key}={value}"));
+    lines.join("\n") + "\n"
+}
+
+/// Every font iTerm2's profiles name, from its settings as `defaults export` prints them.
+fn iterm_fonts(plist: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut rest = plist;
+    while let Some(i) = rest.find("<key>Normal Font</key>") {
+        rest = &rest[i + 22..];
+        let Some(s) = rest.find("<string>") else {
+            break;
+        };
+        let Some(e) = rest[s..].find("</string>") else {
+            break;
+        };
+        out.push(rest[s + 8..s + e].to_string());
+    }
+    out
+}
+
+/// The same settings with every profile's font replaced, each keeping its size; and how
+/// many were changed.
+fn iterm_fonts_set(plist: &str, postscript_name: &str) -> (String, usize) {
+    let mut out = String::new();
+    let mut rest = plist;
+    let mut n = 0;
+    while let Some(i) = rest.find("<key>Normal Font</key>") {
+        let (Some(s), Some(e)) = (
+            rest[i..].find("<string>").map(|s| i + s + 8),
+            rest[i..].find("</string>").map(|e| i + e),
+        ) else {
+            break;
+        };
+        if e < s {
+            break;
+        }
+        let size = rest[s..e]
+            .rsplit(' ')
+            .next()
+            .filter(|z| z.parse::<f64>().is_ok())
+            .unwrap_or("12");
+        out.push_str(&rest[..s]);
+        out.push_str(&format!("{postscript_name} {size}"));
+        rest = &rest[e..];
+        n += 1;
+    }
+    out.push_str(rest);
+    (out, n)
+}
+
+/// Whether Terminal's profile has a font whose name holds `needle`: the font is an
+/// archived object in the settings, but its name sits in it as plain text.
+fn apple_terminal_font_has(plist: &str, profile: &str, needle: &str) -> bool {
+    let Some(w) = plist.find("<key>Window Settings</key>") else {
+        return false;
+    };
+    let Some(p) = plist[w..].find(&format!("<key>{profile}</key>")) else {
+        return false;
+    };
+    let from = &plist[w + p..];
+    let Some(f) = from.find("<key>Font</key>") else {
+        return false;
+    };
+    let after = &from[f..];
+    let (Some(s), Some(e)) = (after.find("<data>"), after.find("</data>")) else {
+        return false;
+    };
+    if e < s {
+        return false;
+    }
+    let bytes = base64_decode(&after[s + 6..e]);
+    String::from_utf8_lossy(&bytes).contains(needle)
+}
+
+fn base64_decode(text: &str) -> Vec<u8> {
+    let mut out = Vec::new();
+    let (mut acc, mut bits) = (0u32, 0);
+    for c in text.bytes() {
+        let v = match c {
+            b'A'..=b'Z' => c - b'A',
+            b'a'..=b'z' => c - b'a' + 26,
+            b'0'..=b'9' => c - b'0' + 52,
+            b'+' => 62,
+            b'/' => 63,
+            _ => continue,
+        };
+        acc = (acc << 6) | v as u32;
+        bits += 6;
+        if bits >= 8 {
+            bits -= 8;
+            out.push((acc >> bits) as u8);
+            acc &= (1 << bits) - 1;
+        }
+    }
+    out
 }
 
 #[cfg(test)]
@@ -1907,6 +2313,185 @@ mod tests {
     }
 
     #[test]
+    fn ini_keys_are_read_set_and_added() {
+        let rc = "[Desktop Entry]\nDefaultProfile=Work.profile\n\n[General]\nx=1\n";
+        assert_eq!(
+            ini_get(rc, "Desktop Entry", "DefaultProfile").as_deref(),
+            Some("Work.profile")
+        );
+        assert_eq!(ini_get(rc, "General", "DefaultProfile"), None);
+        let set = ini_set(rc, "Desktop Entry", "DefaultProfile", "Other.profile");
+        assert_eq!(
+            set,
+            "[Desktop Entry]\nDefaultProfile=Other.profile\n\n[General]\nx=1\n"
+        );
+        let added = ini_set(rc, "General", "y", "2");
+        assert_eq!(
+            added,
+            "[Desktop Entry]\nDefaultProfile=Work.profile\n\n[General]\ny=2\nx=1\n"
+        );
+        let new_section = ini_set("[General]\nName=a\n", "Appearance", "Font", "F,11");
+        assert_eq!(
+            new_section,
+            "[General]\nName=a\n\n[Appearance]\nFont=F,11\n"
+        );
+        assert_eq!(ini_set("", "A", "k", "v"), "[A]\nk=v\n");
+    }
+
+    const ITERM: &str = "<dict>\n<key>New Bookmarks</key>\n<array>\n<dict>\n<key>Name</key>\n<string>Default</string>\n<key>Normal Font</key>\n<string>Menlo-Regular 13</string>\n</dict>\n<dict>\n<key>Normal Font</key>\n<string>MesloLGMNerdFontMono-Regular 11</string>\n</dict>\n</array>\n</dict>\n";
+
+    #[test]
+    fn iterm2_profiles_keep_their_size_and_get_the_font() {
+        assert_eq!(
+            iterm_fonts(ITERM),
+            ["Menlo-Regular 13", "MesloLGMNerdFontMono-Regular 11"]
+        );
+        let (out, n) = iterm_fonts_set(ITERM, FONT_MONO_POSTSCRIPT);
+        assert_eq!(n, 2);
+        assert_eq!(
+            iterm_fonts(&out),
+            [
+                "MesloLGMNerdFontMono-Regular 13",
+                "MesloLGMNerdFontMono-Regular 11"
+            ]
+        );
+        assert!(out.contains("<key>Name</key>\n<string>Default</string>"));
+        assert_eq!(iterm_fonts_set("<dict></dict>", "X").1, 0);
+    }
+
+    /// A keyed archive holding the font name, as base64.
+    fn archived(name: &str) -> String {
+        let bytes = format!("bplist00\u{1}{name}\u{2}NSFont");
+        let table = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+        let mut out = String::new();
+        for chunk in bytes.as_bytes().chunks(3) {
+            let mut v = 0u32;
+            for i in 0..3 {
+                v = (v << 8) | *chunk.get(i).unwrap_or(&0) as u32;
+            }
+            for i in 0..4 {
+                if i <= chunk.len() {
+                    out.push(table[((v >> (18 - 6 * i)) & 63) as usize] as char);
+                } else {
+                    out.push('=');
+                }
+            }
+        }
+        out
+    }
+
+    fn terminal_plist(font: &str) -> String {
+        format!(
+            "<dict>\n<key>Default Window Settings</key>\n<string>Basic</string>\n<key>Window Settings</key>\n<dict>\n<key>Basic</key>\n<dict>\n<key>Font</key>\n<data>\n{}\n</data>\n</dict>\n</dict>\n</dict>\n",
+            archived(font)
+        )
+    }
+
+    #[test]
+    fn terminal_app_s_archived_font_is_read() {
+        assert!(!apple_terminal_font_has(
+            &terminal_plist("Menlo-Regular"),
+            "Basic",
+            "NerdFont"
+        ));
+        assert!(apple_terminal_font_has(
+            &terminal_plist(FONT_MONO_POSTSCRIPT),
+            "Basic",
+            "NerdFont"
+        ));
+        assert!(!apple_terminal_font_has(
+            &terminal_plist(FONT_MONO_POSTSCRIPT),
+            "Pro",
+            "NerdFont"
+        ));
+        assert_eq!(base64_decode("aGVsbG8="), b"hello");
+    }
+
+    #[test]
+    fn a_mac_sets_terminal_and_iterm2_fonts() {
+        let mut f = Fake::new(Os::MacOs, "/Users/ann");
+        for p in ["defaults", "osascript", "pgrep"] {
+            f.programs.insert(p.into(), format!("/usr/bin/{p}").into());
+            f.file(&format!("/usr/bin/{p}"), "");
+        }
+        f.file(
+            "/Users/ann/Library/Preferences/com.googlecode.iterm2.plist",
+            "",
+        );
+        f.answers
+            .insert(("defaults".into(), "read".into()), "Basic\n".into());
+        // One export answer serves both domains: it holds both shapes.
+        f.answers.insert(
+            ("defaults".into(), "export".into()),
+            format!("{}{ITERM}", terminal_plist("Menlo-Regular")),
+        );
+        f.answers
+            .insert(("defaults".into(), "import".into()), String::new());
+        f.answers
+            .insert(("osascript".into(), "-e".into()), String::new());
+        let fake = Arc::new(f);
+        let posh = Posh::new(fake.clone());
+        let s = posh.status();
+        let names: Vec<&str> = s.terminals.iter().map(|t| t.name.as_str()).collect();
+        assert_eq!(names, ["Terminal", "iTerm2"]);
+        assert!(s.terminals.iter().all(|t| !t.font_set));
+        assert!(s.terminal_note.contains("256 colours"));
+
+        let mut log = Vec::new();
+        assert!(posh.set_terminal_fonts(&mut log), "{log:?}");
+        let runs = fake.runs();
+        let script = runs
+            .iter()
+            .find(|r| r.starts_with("/usr/bin/osascript"))
+            .expect("Terminal was told through AppleScript");
+        assert!(script
+            .contains("set font name of default settings to \"MesloLGMNerdFontMono-Regular\""));
+        assert!(script.contains("settings set \"Basic\""));
+        assert!(runs
+            .iter()
+            .any(|r| r.contains("import com.googlecode.iterm2 ")
+                && r.ends_with("idlewalker-iterm2.plist")));
+        assert!(log
+            .iter()
+            .any(|l| l.starts_with("iTerm2: font set to MesloLGM Nerd Font Mono in 2 profile")));
+        assert!(
+            !fake.exists(Path::new("/tmp/idlewalker-iterm2.plist")),
+            "temp file removed"
+        );
+    }
+
+    #[test]
+    fn linux_konsole_gets_a_profile_and_becomes_the_default() {
+        let f = Fake::new(Os::Linux, "/home/ann");
+        f.file(
+            "/home/ann/.config/konsolerc",
+            "[General]\nConfigVersion=1\n",
+        );
+        let fake = Arc::new(f);
+        let posh = Posh::new(fake.clone());
+        let s = posh.status();
+        assert_eq!(s.terminals.len(), 1);
+        assert_eq!(s.terminals[0].name, "Konsole");
+        let mut log = Vec::new();
+        assert!(posh.set_terminal_fonts(&mut log), "{log:?}");
+        let profile = fake.text("/home/ann/.local/share/konsole/IdleWalker.profile");
+        assert_eq!(
+            ini_get(&profile, "Appearance", "Font").as_deref(),
+            Some("MesloLGM Nerd Font,11,-1,5,50,0,0,0,0,0")
+        );
+        assert_eq!(
+            ini_get(&profile, "General", "ParentProfile").as_deref(),
+            Some("FALLBACK/")
+        );
+        let rc = fake.text("/home/ann/.config/konsolerc");
+        assert_eq!(
+            ini_get(&rc, "Desktop Entry", "DefaultProfile").as_deref(),
+            Some("IdleWalker.profile")
+        );
+        assert!(posh.status().terminals[0].font_set);
+    }
+
+    #[test]
     fn winget_gets_the_flags_each_verb_accepts() {
         let mut f = Fake::new(Os::Windows, r"C:\Users\ann");
         f.env
@@ -2012,12 +2597,25 @@ mod tests {
         );
         assert_eq!(s.shells[1].profile, PathBuf::from(r"C:\Users\ann\.bashrc"));
         assert!(s.shells[2].blocker.is_some(), "cmd needs Clink");
-        assert_eq!(s.terminals.len(), 2);
+        let kinds: Vec<TerminalKind> = s.terminals.iter().map(|t| t.kind).collect();
+        assert_eq!(
+            kinds,
+            [
+                TerminalKind::VsCode,
+                TerminalKind::WindowsTerminal,
+                TerminalKind::ConsoleHost
+            ]
+        );
         assert!(s.terminals.iter().all(|t| !t.font_set));
 
         let done = posh.perform(&Task::SetTerminalFonts);
         assert!(done.ok, "{:?}", done.log);
-        assert!(done.status.terminals.iter().all(|t| t.font_set));
+        // The console host is set through reg.exe, which this fake machine lacks.
+        assert!(done
+            .status
+            .terminals
+            .iter()
+            .all(|t| t.font_set || t.kind == TerminalKind::ConsoleHost));
         let code = fake.text(r"C:\Users\ann\AppData\Roaming\Code\User\settings.json");
         assert_eq!(
             code,

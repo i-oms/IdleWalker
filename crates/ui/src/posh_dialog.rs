@@ -413,7 +413,7 @@ impl PoshDialog {
                     right,
                     y,
                     right_w,
-                    "No VS Code, Windows Terminal or GNOME Terminal settings found.",
+                    "No terminal settings found to change.",
                     text,
                     gfx::DIM,
                 );
@@ -436,15 +436,7 @@ impl PoshDialog {
                 );
                 y += line;
             }
-            c.text_fit(
-                f,
-                right,
-                y,
-                right_w,
-                &format!("Other terminals: pick \"{FONT_NAME}\" in their own settings."),
-                small,
-                gfx::DIM,
-            );
+            c.text_fit(f, right, y, right_w, st.terminal_note, small, gfx::DIM);
             y += line;
             if !st.terminals.is_empty()
                 && btn(c, f, right, y, px(220.0), "Use the font in these terminals")
