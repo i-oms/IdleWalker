@@ -753,7 +753,7 @@ impl Walker {
             self.optimism = -1.0;
         }
     }
-    // How far ahead it connects acts to consequences: a child lives in the moment.
+    // How far ahead it connects acts to consequences.
     pub fn mind_gamma(mut self) -> f64 {
         'sw1: {
             match self.personality.temperament {
@@ -772,14 +772,8 @@ impl Walker {
                 Temperament::Goofy => {
                     return 0.85;
                 }
-                Temperament::Eccentric => {
-                    return 0.7;
-                }
                 Temperament::Feisty => {
                     return 0.8;
-                }
-                Temperament::Suave => {
-                    return 0.87;
                 }
                 _ => {
                     return Walker::GAMMA;
@@ -809,14 +803,8 @@ impl Walker {
                 Temperament::Goofy => {
                     base_rate = 0.14;
                 }
-                Temperament::Eccentric => {
-                    base_rate = 0.16;
-                }
                 Temperament::Feisty => {
                     base_rate = 0.11;
-                }
-                Temperament::Suave => {
-                    base_rate = 0.13;
                 }
                 _ => {
                     base_rate = Settings::LEARN_RATE;
@@ -848,7 +836,7 @@ impl Walker {
         }
         return base_rate;
     }
-    // How often it tries something unexpected: clowns and children experiment, the timid do not.
+    // How often it tries something unexpected: clowns experiment, the timid do not.
     pub fn explore(mut self) -> f64 {
         let mut base_rate: f64 = <f64>::default();
         'sw1: {
@@ -868,14 +856,8 @@ impl Walker {
                 Temperament::Goofy => {
                     base_rate = 0.24;
                 }
-                Temperament::Eccentric => {
-                    base_rate = 0.22;
-                }
                 Temperament::Feisty => {
                     base_rate = 0.16;
-                }
-                Temperament::Suave => {
-                    base_rate = 0.18;
                 }
                 _ => {
                     base_rate = Settings::EXPLORE_RATE;
@@ -922,14 +904,8 @@ impl Walker {
                 Temperament::Goofy => {
                     return 0.3;
                 }
-                Temperament::Eccentric => {
-                    return 0.4;
-                }
                 Temperament::Feisty => {
                     return 0.2;
-                }
-                Temperament::Suave => {
-                    return 0.3;
                 }
                 _ => {
                     return 0.1;
@@ -1001,10 +977,6 @@ impl Walker {
             feel = 0.6;
         } else if self.personality.temperament == Temperament::Feisty {
             feel = 0.4;
-        } else if self.personality.temperament == Temperament::Suave {
-            feel = 0.5;
-        } else if self.personality.temperament == Temperament::Eccentric {
-            feel = 0.8;
         }
         let mut rate: f64 = (if (threat > self.fear) {
             (2.5 * feel)
@@ -1154,9 +1126,6 @@ impl Walker {
         }
         // Hunger: contact after a long lonely trek teaches more.
         let mut bonus: f64 = (if (style == ChatStyle::Pat) { 0.6 } else { 0.5 });
-        if (style == ChatStyle::Pat) && (self.personality.temperament == Temperament::Eccentric) {
-            bonus += 0.2;
-        }
         self.like(
             partner,
             (if (style == ChatStyle::Pat) { 0.2 } else { 0.15 }),
@@ -1174,9 +1143,6 @@ impl Walker {
             return;
         }
         let mut bonus: f64 = (if (style == ChatStyle::Pat) { 0.6 } else { 0.5 });
-        if (style == ChatStyle::Pat) && (self.personality.temperament == Temperament::Eccentric) {
-            bonus += 0.2;
-        }
         self.like(
             partner,
             (if (style == ChatStyle::Pat) { 0.2 } else { 0.15 }),
@@ -1194,16 +1160,10 @@ impl Walker {
             }),
         );
     }
-    // The prank landed: the victim jumped. Bean revels in his schemes.
+    // The prank landed: the victim jumped.
     pub fn note_prank_landed(mut self, mut target: Walker) {
         self.like(target, -0.1);
-        self.add_bonus(
-            (if (self.personality.temperament == Temperament::Eccentric) {
-                0.65
-            } else {
-                0.5
-            }),
-        );
+        self.add_bonus(0.5);
     }
     // Pranked by someone: remembers who.
     pub fn note_pranked(mut self, mut by: Walker) {
@@ -1234,7 +1194,7 @@ impl Walker {
         self.remember_event(Walker::EV_KIND, other);
         self.add_bonus(0.2);
     }
-    // Danced, showed off Teddy, laid an egg before a crowd: applause.
+    // Danced or laid an egg before a crowd: applause.
     pub fn note_audience(mut self, mut amount: f64) {
         self.add_bonus(amount);
     }

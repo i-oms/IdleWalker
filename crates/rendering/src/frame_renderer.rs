@@ -230,12 +230,8 @@ impl FrameRenderer {
         mut sole_y: f64,
         mut scale: f64,
     ) {
-        if look.figure == Figure::Bean {
-            BeanPainter::draw(surface, pose, face_left, centre_x, sole_y, scale);
-        } else if look.figure == Figure::Bird {
+        if look.figure == Figure::Bird {
             BirdPainter::draw(surface, pose, look, face_left, centre_x, sole_y, scale);
-        } else if look.figure == Figure::Panther {
-            PantherPainter::draw(surface, pose, face_left, centre_x, sole_y, scale);
         } else {
             MinionPainter::draw(
                 surface, pose, look, dress, face_left, centre_x, sole_y, scale,

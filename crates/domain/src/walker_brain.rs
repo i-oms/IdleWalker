@@ -36,53 +36,44 @@ impl Walker {
                         gain = 0.0;
                     }
                 }
-                Mode::Antic => {
-                    'sw2: {
-                        match self.antic {
-                            Antic::Dance
-                            | Antic::Twirl
-                            | Antic::Joy
-                            | Antic::Box
-                            | Antic::Flex
-                            | Antic::Stomp
-                            | Antic::Laugh
-                            | Antic::Boo
-                            | Antic::Trip
-                            | Antic::Strum
-                            | Antic::Pushups
-                            | Antic::Jog
-                            | Antic::Flap
-                            | Antic::Dig
-                            | Antic::Moonwalk
-                            | Antic::Jive
-                            | Antic::Sneak
-                            | Antic::Drive
-                            | Antic::Photo
-                            | Antic::Peck
-                            | Antic::Fly
-                            | Antic::Launch
-                            | Antic::Rage
-                            | Antic::Inflate
-                            | Antic::Blast => {
-                                drain = 0.08;
-                                gain = 0.0;
-                            }
-                            Antic::Doze => {
-                                if self.mode_time > 2.1 {
-                                    gain = 0.3;
-                                }
-                            }
-                            Antic::Teddy => {
-                                gain = 0.04; // a comfort
-                            }
-                            Antic::Sleepwalk => {
-                                gain = 0.2;
-                            }
-                            Antic::Daydream => {
-                                gain = 0.05;
-                            }
-                            _ => {}
+                Mode::Antic => 'sw2: {
+                    match self.antic {
+                        Antic::Dance
+                        | Antic::Twirl
+                        | Antic::Joy
+                        | Antic::Box
+                        | Antic::Flex
+                        | Antic::Stomp
+                        | Antic::Laugh
+                        | Antic::Boo
+                        | Antic::Trip
+                        | Antic::Strum
+                        | Antic::Pushups
+                        | Antic::Jog
+                        | Antic::Flap
+                        | Antic::Dig
+                        | Antic::Moonwalk
+                        | Antic::Peck
+                        | Antic::Fly
+                        | Antic::Launch
+                        | Antic::Rage
+                        | Antic::Inflate
+                        | Antic::Blast => {
+                            drain = 0.08;
+                            gain = 0.0;
                         }
+                        Antic::Doze => {
+                            if self.mode_time > 2.1 {
+                                gain = 0.3;
+                            }
+                        }
+                        Antic::Sleepwalk => {
+                            gain = 0.2;
+                        }
+                        Antic::Daydream => {
+                            gain = 0.05;
+                        }
+                        _ => {}
                     }
                 }
                 _ => {}
@@ -227,9 +218,7 @@ impl Walker {
             && (d > (1.6 * self.body_width())))
             && (d < visit_reach));
         let mut prank_valid: bool = (((((same
-            && ((((tm == Temperament::Aggressive) || (tm == Temperament::Eccentric))
-                || (tm == Temperament::Feisty))
-                || (tm == Temperament::Suave)))
+            && ((tm == Temperament::Aggressive) || (tm == Temperament::Feisty)))
             && other.is_quiet())
             && (d > (1.6 * self.body_width())))
             && (d < (450.0 * self.size_factor)))
@@ -295,9 +284,8 @@ impl Walker {
                     // Scared: scary show-offs are not even tried.
                     if (self.fear > 0.4) && ((*acts.at(i)) < habits.len()) {
                         let mut a: Antic = (*habits.at((*acts.at(i)))).antic;
-                        if (((((((((a == Antic::Dance) || (a == Antic::Twirl))
+                        if ((((((((a == Antic::Dance) || (a == Antic::Twirl))
                             || (a == Antic::Strum))
-                            || (a == Antic::Jive))
                             || (a == Antic::Flex))
                             || (a == Antic::Box))
                             || (a == Antic::Taunt))
@@ -358,7 +346,6 @@ impl Walker {
     }
     // Learned value plus inborn taste, current drives, mood and who it would deal with.
     pub fn option_value(mut self, mut state: i32, mut choice: i32, mut other: Walker) -> f64 {
-        let mut eccentric: bool = (self.personality.temperament == Temperament::Eccentric);
         // Upgrade v3: continuous generalizer. Same feat for all choices this Decide,
         // small at birth so newborns act from personality, elders from lived nuance.
         let mut feat_now: Arr<f64> = Arr::new(12);
@@ -375,9 +362,6 @@ impl Walker {
                 1.0
             });
             v = (((*self.values.at2(state, choice)) + mlp) + (self.prior_for(choice) * drive));
-            if eccentric && (h.antic == Antic::Teddy) {
-                v += (self.social * 0.4); // lonely: cling to the only friend
-            }
             // Mood colours the habits: cheer invites show-offs, gloom invites rest,
             // fear invites hiding and kills showing off.
             if self.cheer > 0.0 {
@@ -386,7 +370,6 @@ impl Walker {
                         Antic::Dance
                         | Antic::Joy
                         | Antic::Strum
-                        | Antic::Jive
                         | Antic::Wave
                         | Antic::Laugh
                         | Antic::Twirl
@@ -402,10 +385,10 @@ impl Walker {
             } else if self.cheer < 0.0 {
                 'sw2: {
                     match h.antic {
-                        Antic::Rest | Antic::Doze | Antic::Teddy | Antic::Daydream => {
+                        Antic::Rest | Antic::Doze | Antic::Daydream => {
                             v += (-self.cheer * 0.12);
                         }
-                        Antic::Dance | Antic::Joy | Antic::Jive | Antic::Strum => {
+                        Antic::Dance | Antic::Joy | Antic::Strum => {
                             v += (self.cheer * 0.15);
                         }
                         _ => {}
@@ -421,7 +404,6 @@ impl Walker {
                         Antic::Dance
                         | Antic::Twirl
                         | Antic::Strum
-                        | Antic::Jive
                         | Antic::Flex
                         | Antic::Box
                         | Antic::Taunt
@@ -464,19 +446,11 @@ impl Walker {
                 }
                 v += (self.novelty_bonus(choice) - self.habituation_penalty(choice));
             } else if (choice == self.prank_choice()) && !other.is_null() {
-                // Bullies pick on the disliked; Bean pays back his tormentors.
+                // Bullies pick on the disliked.
                 v += (if (self.personality.temperament == Temperament::Aggressive) {
                     (-(self.fond_of(other)) * 0.3)
                 } else {
-                    (if eccentric {
-                        (if (self.fond_of(other) < -0.15) {
-                            0.35
-                        } else {
-                            (self.fond_of(other) * 0.05)
-                        })
-                    } else {
-                        (self.fond_of(other) * 0.1)
-                    })
+                    (self.fond_of(other) * 0.1)
                 });
                 if (self.personality.temperament == Temperament::Aggressive)
                     && (other == self.rival())
@@ -525,22 +499,13 @@ impl Walker {
                 | Antic::Flap
                 | Antic::Moonwalk
                 | Antic::Dig
-                | Antic::Jive
-                | Antic::Drive
                 | Antic::Fly
                 | Antic::Launch
                 | Antic::Inflate
                 | Antic::Blast => {
                     return ((habit.weight * (0.25 + (1.2 * self.energy))) * (1.0 - (0.4 * night)));
                 }
-                Antic::Wave
-                | Antic::Point
-                | Antic::Look
-                | Antic::Peekaboo
-                | Antic::Kiss
-                | Antic::Hello
-                | Antic::Waggle
-                | Antic::Photo => {
+                Antic::Wave | Antic::Point | Antic::Look | Antic::Peekaboo | Antic::Kiss => {
                     return (habit.weight * (0.5 + self.curiosity));
                 }
                 _ => {
@@ -644,12 +609,7 @@ impl Walker {
             self.pending_bonus -= 0.15;
         } else if was == Goal::Visit {
             // Stood up: stings, and worse the lonelier the walk over was.
-            self.pending_bonus -= (0.1
-                + (if (self.personality.temperament == Temperament::Eccentric) {
-                    (0.3 * (0.5 + self.social))
-                } else {
-                    0.0
-                }));
+            self.pending_bonus -= 0.1;
             if self.pending_bonus < -(Walker::MAX_REWARD) {
                 self.pending_bonus = -(Walker::MAX_REWARD);
             }
@@ -678,25 +638,9 @@ impl Walker {
                     }
                 }
                 Goal::Prank => {
-                    // The target is kept for the shout (or the poke, or the peck) itself.
-                    self.antic = (if self.bird {
-                        Antic::Peck
-                    } else {
-                        (if (self.bean || self.panther) {
-                            Antic::Poke
-                        } else {
-                            Antic::Boo
-                        })
-                    });
-                    self.antic_seconds = (if self.bird {
-                        2.2
-                    } else {
-                        (if (self.bean || self.panther) {
-                            2.8
-                        } else {
-                            1.6
-                        })
-                    });
+                    // The target is kept for the shout (or the peck) itself.
+                    self.antic = (if self.bird { Antic::Peck } else { Antic::Boo });
+                    self.antic_seconds = (if self.bird { 2.2 } else { 1.6 });
                     self.antic_stage = 0;
                     self.stop_facing(self.goal_target.centre_x(), Mode::Antic);
                 }
@@ -1064,10 +1008,9 @@ impl Walker {
     }
     //
     // Saw somebody start to yawn or dance: maybe do the same, a moment
-    // later. The mimic copies most anything it sees. Mr. Bean showing
-    // off Teddy draws a wave, a look or a laugh, depending on who sees;
-    // Matilda laying an egg draws the same crowd, and one bird's rage
-    // sets the other birds off.
+    // later. The mimic copies most anything it sees. Matilda laying an
+    // egg draws a wave, a look or a laugh, depending on who sees, and
+    // one bird's rage sets the other birds off.
     //
     pub fn catch(mut self, mut what: Antic) {
         if (self.catch_cooldown > 0.0) || self.has_pending {
@@ -1091,10 +1034,6 @@ impl Walker {
                     Temperament::Friendly | Temperament::Goofy => {
                         chance = 0.85;
                     }
-                    Temperament::Eccentric => {
-                        chance = 0.8;
-                        what = Antic::Jive;
-                    }
                     Temperament::Feisty => {
                         chance = 0.6;
                     }
@@ -1109,32 +1048,8 @@ impl Walker {
                     }
                 }
             }
-        } else if what == Antic::Teddy {
-            'sw2: {
-                match self.personality.temperament {
-                    Temperament::Friendly | Temperament::Goofy => {
-                        chance = 0.7;
-                        what = Antic::Wave;
-                    }
-                    Temperament::Aggressive => {
-                        chance = 0.5;
-                        what = Antic::Laugh;
-                    }
-                    Temperament::Feisty => {
-                        chance = 0.5;
-                        what = Antic::Look;
-                    }
-                    Temperament::Calm | Temperament::Timid => {
-                        chance = 0.5;
-                        what = Antic::Look;
-                    }
-                    _ => {
-                        return;
-                    }
-                }
-            }
         } else if what == Antic::Egg {
-            // Just like Teddy: everyone comes to look at the egg.
+            // Everyone comes to look at the egg.
             'sw3: {
                 match self.personality.temperament {
                     Temperament::Friendly | Temperament::Goofy => {
@@ -1164,9 +1079,7 @@ impl Walker {
                 return;
             }
             chance = 0.6;
-        } else if (((((((((self.personality.mimic && (what != Antic::Toot))
-            && (what != Antic::Drive))
-            && (what != Antic::Photo))
+        } else if (((((((self.personality.mimic && (what != Antic::Toot))
             && (what != Antic::Peck))
             && (what != Antic::Fly))
             && (what != Antic::Launch))

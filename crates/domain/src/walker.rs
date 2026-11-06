@@ -38,8 +38,6 @@ pub enum Reaction {
     Chuckle,   // laughing, hands on the belly
     Huff,      // turned away, hands on hips, grumpy
     Cower,     // crouched with the arms over the head, trembling
-    Wince,     // hands clapped to the cheeks, one eye screwed shut: that looked painful (Mr. Bean)
-    Waft,      // recoiling, fanning a hand in front of the nose (Mr. Bean)
     Bristle,   // feathers puffed, wings half out, beak open: back off (Angry Birds)
 }
 impl Reaction {
@@ -51,9 +49,7 @@ impl Reaction {
             3 => Reaction::Chuckle,
             4 => Reaction::Huff,
             5 => Reaction::Cower,
-            6 => Reaction::Wince,
-            7 => Reaction::Waft,
-            8 => Reaction::Bristle,
+            6 => Reaction::Bristle,
             _ => Self::default(),
         }
     }
@@ -186,9 +182,7 @@ pub struct WalkerData {
     pub rng: Random,
     pub personality: Personality,
     pub body: Anatomy,
-    pub bean: bool,
     pub bird: bool,
-    pub panther: bool,
     pub puffs: Arr<Puff>,
     pub mode: Mode,
     pub mode_time: f64,
@@ -382,9 +376,7 @@ impl Walker {
         self.rng = rng;
         self.personality = personality;
         self.body = personality.anatomy();
-        self.bean = (personality.figure() == Figure::Bean);
         self.bird = (personality.figure() == Figure::Bird);
-        self.panther = (personality.figure() == Figure::Panther);
     }
     pub const BLINK_SECONDS: f64 = 0.16;
     pub const GREET_SECONDS: f64 = 1.3;
@@ -490,7 +482,7 @@ impl Walker {
         if self.mode != Mode::Antic {
             return false;
         }
-        return ((((((((((((self.antic == Antic::Doze) || (self.antic == Antic::Whistle))
+        return ((((((((((self.antic == Antic::Doze) || (self.antic == Antic::Whistle))
             || (self.antic == Antic::Scratch))
             || (self.antic == Antic::Yawn))
             || (self.antic == Antic::Hiccups))
@@ -498,8 +490,6 @@ impl Walker {
             || (self.antic == Antic::Fret))
             || (self.antic == Antic::Dig))
             || (self.antic == Antic::Sleepwalk))
-            || (self.antic == Antic::Teddy))
-            || (self.antic == Antic::Ponder))
             || (self.antic == Antic::Egg));
     }
     // Still sad about being shoved.
@@ -715,14 +705,8 @@ impl Walker {
                 Temperament::Goofy => {
                     self.react_with(Reaction::Chuckle, x, 1.6, false);
                 }
-                Temperament::Eccentric => {
-                    self.react_with(Reaction::Wince, x, 1.8, false);
-                }
                 Temperament::Feisty => {
                     self.react_with(Reaction::Bristle, x, 1.6, false);
-                }
-                Temperament::Suave => {
-                    self.react_with(Reaction::Chuckle, x, 1.6, false);
                 }
                 _ => {
                     self.react_with(Reaction::Jeer, x, 1.8, false);
@@ -746,14 +730,8 @@ impl Walker {
                 Temperament::Goofy => {
                     self.react_with(Reaction::Chuckle, x, 1.4, false);
                 }
-                Temperament::Eccentric => {
-                    self.react_with(Reaction::Waft, x, 1.6, false);
-                }
                 Temperament::Feisty => {
                     self.react_with(Reaction::Bristle, x, 1.4, false);
-                }
-                Temperament::Suave => {
-                    self.react_with(Reaction::Waft, x, 1.5, false);
                 }
                 _ => {
                     self.react_with(Reaction::Huff, x, 1.2, true);
@@ -1450,15 +1428,7 @@ impl Walker {
                     return ((if self.head_turned { -45 } else { 58 }) as f64);
                 }
                 Mode::Look => {
-                    return ((if self.head_turned {
-                        (if (self.bean || self.panther) {
-                            -15
-                        } else {
-                            -45
-                        })
-                    } else {
-                        0
-                    }) as f64); // Bean and Panther turn the head, not the whole body
+                    return ((if self.head_turned { -45 } else { 0 }) as f64);
                 }
                 Mode::Wave => {
                     return ((if (self.wave_at_cursor || !(self.company_nearby)) {
@@ -1515,15 +1485,8 @@ impl Walker {
                 Temperament::Timid => {
                     return -12.0; // half turned away, ready to run
                 }
-                Temperament::Eccentric => {
-                    return 5.0; // square on; the head does the looking about
-                }
                 Temperament::Feisty => {
                     return (8.0 * (self.time * 1.1).sin()); // perched, shifting from foot to foot
-                }
-                Temperament::Suave => {
-                    return (rt::round_even(((8.0 * (self.time * 0.9).sin()) * 4.0)) / 4.0);
-                    // suave sway, head does the work
                 }
                 _ => {
                     return ((if (((((self.cursor_x) as f64) - self.cx) * ((self.facing) as f64))
@@ -1686,20 +1649,6 @@ impl Walker {
                         pose.fore_near = (70.0 + wring);
                         pose.fore_far = (76.0 - wring);
                         pose.lean = 0.1;
-                    } else if self.personality.temperament == Temperament::Eccentric {
-                        // Mr. Bean: hands clasped in front, rocking on his heels.
-                        Walker::hands_clasped(rt::mref(&mut pose));
-                        pose.lean =
-                            (rt::round_even(((0.12 * (self.time * 1.1).sin()) * 8.0)) / 8.0);
-                    } else if self.personality.temperament == Temperament::Suave {
-                        // The Panther: one paw on the hip, suave lean, tail swaying.
-                        pose.arm_near = 40.0;
-                        pose.fore_near = -85.0;
-                        pose.arm_far = -10.0;
-                        pose.fore_far = 20.0;
-                        pose.lean =
-                            (rt::round_even(((-0.12 + (0.08 * (self.time * 0.9).sin())) * 8.0))
-                                / 8.0);
                     }
                     breathe = true;
                 }
@@ -1721,9 +1670,6 @@ impl Walker {
         if breathe {
             pose.body_dy = Walker::quantise(((0.3 * (1.0 + (self.time * 2.6).sin())) / 2.0));
             pose.lean = Walker::quantise((pose.lean + self.fidget_lean()));
-        }
-        if self.bean || self.panther {
-            self.bean_touch(rt::mref(&mut pose));
         }
         pose.stretch_y *= ((1.0 - (0.22 * self.squash)) * self.personality.build_y);
         pose.stretch_x *= ((1.0 + (0.16 * self.squash)) * self.personality.build_x);
@@ -1776,10 +1722,6 @@ impl Walker {
             / 2.0); // two bobs per stride
     }
     pub fn wave_arm(mut self, pose: &mut Pose) {
-        if self.bean {
-            Walker::hello_pose(&mut *pose, self.mode_time);
-            return;
-        }
         if self.bird {
             // No wings to wave with: a happy bouncing bow instead.
             (*pose).body_dy = Walker::quantise(
@@ -1788,18 +1730,6 @@ impl Walker {
             );
             (*pose).lean = (rt::round_even(((0.2 * (self.mode_time * 7.0).sin()) * 8.0)) / 8.0);
             (*pose).stretch_y = 1.03;
-            return;
-        }
-        if self.panther {
-            // Suave slow wave: paw high, elegant sway, slight bow of the head.
-            (*pose).arm_near = (145.0 + (10.0 * (self.mode_time * 8.0).sin()));
-            (*pose).fore_near = (-20.0 + (18.0 * (self.mode_time * 8.0).sin()));
-            (*pose).lean = (rt::round_even(((0.1 * (self.mode_time * 3.5).sin()) * 8.0)) / 8.0);
-            (*pose).head_dip = Walker::quantise((0.15 + (0.1 * (self.mode_time * 3.5).sin())));
-            (*pose).body_dy = Walker::quantise(
-                ((0.25 * (1.0 - (((self.mode_time * 2.0) * std::f64::consts::PI) / 0.9).cos()))
-                    / 2.0),
-            );
             return;
         }
         // Arm up, forearm out to the side so the hand clears the goggles.
@@ -1815,93 +1745,6 @@ impl Walker {
         (*pose).arm_far = -40.0;
         (*pose).fore_near = -85.0;
         (*pose).fore_far = 85.0;
-    }
-    // Mr. Bean's hands clasped in front of him at the belly.
-    pub fn hands_clasped(pose: &mut Pose) {
-        (*pose).arm_near = 10.0;
-        (*pose).arm_far = -10.0;
-        (*pose).fore_near = -30.0;
-        (*pose).fore_far = 30.0;
-        (*pose).reach_near = 50.0;
-        (*pose).reach_far = 50.0;
-    }
-    // Mr. Bean's hands behind his back.
-    pub fn hands_behind(pose: &mut Pose) {
-        (*pose).arm_near = -25.0;
-        (*pose).arm_far = 25.0;
-        (*pose).fore_near = -60.0;
-        (*pose).fore_far = 60.0;
-    }
-    // Mr. Bean's touches on whatever the pose is: the head moves on its
-    // own (the body stays put), he creeps on tiptoe when up to something,
-    // and a nod is a nod of the head rather than a dip of the whole body.
-    pub fn bean_touch(mut self, pose: &mut Pose) {
-        'sw1: {
-            match self.mode {
-                Mode::PeekLook => {
-                    (*pose).head_turn = ((if (self.mode_time < 0.3) {
-                        0
-                    } else {
-                        (if (self.mode_time < 0.8) { -40 } else { 40 })
-                    }) as f64);
-                }
-                Mode::Look => {
-                    (*pose).head_turn = ((if self.head_turned { -40 } else { 0 }) as f64);
-                }
-                Mode::Walk => {
-                    (*pose).head_dip = 0.15;
-                    if self.goal == Goal::Prank {
-                        // Creeping up on tiptoe, hunched, hands up like a cartoon burglar.
-                        (*pose).tiptoe = 1.0;
-                        (*pose).lean = 0.3;
-                        (*pose).arm_near = 45.0;
-                        (*pose).fore_near = 100.0;
-                        (*pose).arm_far = 45.0;
-                        (*pose).fore_far = 100.0;
-                        (*pose).head_dip = 0.3;
-                        (*pose).body_dy = Walker::quantise(
-                            (0.3 + ((0.3
-                                * (1.0 - ((self.walk_phase * 4.0) * std::f64::consts::PI).cos()))
-                                / 2.0)),
-                        );
-                    }
-                }
-                Mode::Rest => {
-                    // Looking slowly about, in steps so a rest is not repainted every frame.
-                    (*pose).head_turn =
-                        (rt::round_even(((20.0 * (self.time * 0.9).sin()) / 4.0)) * 4.0);
-                }
-                Mode::Greet => {
-                    if self.greet_style == GreetStyle::Nod {
-                        (*pose).head_dip = Walker::quantise(
-                            ((0.7
-                                * (1.0
-                                    - (((self.mode_time * 2.0) * std::f64::consts::PI) / 0.5)
-                                        .cos()))
-                                / 2.0),
-                        );
-                        (*pose).body_dy = 0.0;
-                    }
-                }
-                Mode::Chat => {
-                    if (self.chat_style == ChatStyle::Chat) && !(self.talking()) {
-                        // Nodding along with the head.
-                        (*pose).head_dip = Walker::quantise(
-                            ((0.5
-                                * (1.0
-                                    - (((2.0 * std::f64::consts::PI) * self.mode_time) / 0.6)
-                                        .cos()))
-                                / 2.0),
-                        );
-                        (*pose).body_dy = 0.0;
-                    }
-                }
-                Mode::Air | Mode::Exit => {
-                    (*pose).head_dip = (if (self.vy < 0.0) { -0.2 } else { 0.2 });
-                }
-                _ => {}
-            }
-        }
     }
     // Slow motions are stepped in eighths of a unit, so a walker that is
     // only breathing is not repainted every single frame.
@@ -2233,10 +2076,6 @@ impl Walker {
                             self.vx = 0.0;
                             self.start_antic(Antic::Faint);
                             return;
-                        }
-                        Temperament::Eccentric => {
-                            // A long hard stare at whoever did that.
-                            self.set_mood((*EXPRESSION_GLARE), 2.5);
                         }
                         Temperament::Feisty => {
                             // Bristling fury: pecking order to sort out.

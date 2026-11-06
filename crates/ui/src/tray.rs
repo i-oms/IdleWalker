@@ -209,8 +209,6 @@ pub fn build(c: &Choices, desktop: &dyn Desktop) -> Vec<Node> {
             enabled: w,
             children: minions,
         },
-        check("bean", "Mr. Bean", w, c.bean),
-        check("panther", "Pink Panther", w, c.panther),
         Node::Sub {
             label: "Angry Birds".into(),
             enabled: w,

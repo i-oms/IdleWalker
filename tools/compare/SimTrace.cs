@@ -28,9 +28,7 @@ namespace IdleWalker.Tools
             troupe.MinionMask = Troupe.AllMinionsMask;
             troupe.BirdMask = Troupe.AllBirdsMask;
             troupe.MinionsEnabled = true;
-            troupe.BeanEnabled = true;
             troupe.BirdsEnabled = true;
-            troupe.PantherEnabled = true;
             double dt = 1.0 / 60.0;
             int total = 60 * 600;
             ulong h = 14695981039346656037UL;

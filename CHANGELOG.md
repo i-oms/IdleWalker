@@ -42,3 +42,8 @@ Notable changes are recorded here. The format follows
 - macOS downloads are now one zip holding a universal `IdleWalker.app`, instead of a tar
   archive per CPU type.
 - On macOS, a click on the status bar icon now opens the brightness panel.
+
+### Removed
+
+- Mr. Bean and the Pink Panther, along with their menu entries and the antics only they used.
+  Saved memories of the other walkers are kept.

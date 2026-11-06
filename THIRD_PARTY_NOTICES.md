@@ -4,8 +4,8 @@ IdleWalker's own code is under the [MIT License](LICENSE). The items below are n
 
 ## Characters
 
-IdleWalker draws likenesses of the Minions, Mr. Bean and the Pink Panther. These characters and
-their names belong to their respective owners. IdleWalker is an unofficial fan project, and is not
+IdleWalker draws likenesses of the Minions and the Angry Birds. These characters and their names
+belong to their respective owners. IdleWalker is an unofficial fan project, and is not
 affiliated with or endorsed by them. The MIT License grants no rights in these characters.
 
 ## Bundled font

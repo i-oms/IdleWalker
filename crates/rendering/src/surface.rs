@@ -71,7 +71,7 @@ impl Surface {
         let mut needed: i32 = (width * height);
         if needed > self.pixels.len() {
             // Grow once: a pooled canvas keeps its arrays for good, so a
-            // Minion's frame after Mr. Bean's costs no allocation.
+            // bird's frame after a Minion's costs no allocation.
             self.pixels = Arr::new(needed);
             self.layer = Arr::new(needed);
             self.rim = Arr::new(needed);

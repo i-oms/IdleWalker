@@ -40,8 +40,8 @@
 Leave your mouse alone for **two seconds**. A small, shaded, 3D-looking character peeks over the
 bottom edge of your screen, hops out, and starts strolling along your monitors.
 
-Then it gets on with its day. It waves, dances, dozes off standing up, pokes its friends and
-pranks the timid ones. **Move the mouse** and it gets a fright and dives back out of sight.
+Then it gets on with its day. It waves, dances, dozes off standing up and pranks the timid
+ones. **Move the mouse** and it gets a fright and dives back out of sight.
 
 It isn't a screensaver, and it doesn't get in your way. Clicks pass straight through it, it stays
 out of full-screen apps, and it lives quietly in your tray.
@@ -80,10 +80,10 @@ cargo build --release
 
 ## 🎭 What it does
 
-- 🧍 **A cast of 22 walkers.** Each one has a temperament: calm, friendly, aggressive, timid,
-  goofy, eccentric, feisty or suave.
-- 🤹 **53 antics.** They dance, moonwalk, twirl, salute, doze, sleepwalk, play peekaboo, take
-  photos, do push-ups, launch themselves and blow up in a rage.
+- 🧍 **A cast of 20 walkers.** Each one has a temperament: calm, friendly, aggressive, timid,
+  goofy or feisty.
+- 🤹 **43 antics.** They dance, moonwalk, twirl, salute, doze, sleepwalk, play peekaboo, do
+  push-ups, launch themselves and blow up in a rage.
 - 🧠 **They learn.** Every walker remembers what went well and what didn't, and slowly develops
   its own tastes. The **Brains** dashboard shows what each one has picked up.
 - 🤝 **They get on with each other (or don't).** The friendly ones stop to say hello, bullies
@@ -109,9 +109,9 @@ cargo build --release
 ## 👋 Meet the cast
 
 The walkers came from a C# Windows app that grew into a full cast with personalities, moods and
-memories. Its [original README](https://github.com/i-oms/fun-desktop#readme) has the full
-character list, how they get on with each other, and every tuning knob. All of it carries over to
-this cross-platform Rust version, and an existing cast keeps its memories.
+memories. Its [original README](https://github.com/i-oms/fun-desktop#readme) describes how they
+get on with each other and every tuning knob. This cross-platform Rust version keeps the Minions
+and the Angry Birds, and an existing cast keeps its memories.
 
 ## ❓ FAQ
 

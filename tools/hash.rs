@@ -1,6 +1,6 @@
 //! Prints an FNV-1a hash of the painted canvas for a fixed grid of poses across
-//! all four figures: the same grid as the C# original's tools/Hash.cs, so a diff
-//! of the two outputs is empty exactly when the painters are pixel-identical.
+//! both figures, to diff against another build: the output is unchanged exactly when
+//! the painters are pixel-identical.
 use idlewalker_rendering::prelude::*;
 
 fn fnv(data: &Arr<i32>, n: i32) -> u64 {
@@ -19,8 +19,6 @@ fn main() {
         roster[1].look,
         roster[4].look,
         roster[7].look,
-        PERSONALITY_BEAN.look,
-        PERSONALITY_PANTHER.look,
         birds[0].look,
         birds[3].look,
         birds[7].look,
@@ -30,8 +28,6 @@ fn main() {
         *ANATOMY_MINION,
         *ANATOMY_MINION,
         *ANATOMY_MINION,
-        *ANATOMY_BEAN,
-        *ANATOMY_PANTHER,
         *ANATOMY_BIRD,
         *ANATOMY_BIRD,
         *ANATOMY_BIRD,
@@ -78,14 +74,10 @@ fn main() {
                     if fi == 3 {
                         pose.note = true;
                         pose.decor_phase = 0.35;
-                        pose.teddy = true;
-                        pose.teddy_wave = 0.5;
                     }
                     if fi == 4 {
                         pose.zzz = true;
                         pose.decor_phase = 0.6;
-                        pose.head_dip = 0.3;
-                        pose.head_turn = 20.0;
                     }
                     if yi == 5 {
                         pose.leg_tuck = 0.6;
@@ -95,15 +87,10 @@ fn main() {
                         pose.decor_phase = 0.5;
                     }
                     if yi == 2 && pi == 1 {
-                        pose.wheel = true;
-                        pose.wheel_turn = 0.4;
                         pose.egg = true;
                         pose.puff_up = 0.5;
-                        pose.tiptoe = 0.5;
                     }
                     if yi == 4 && pi == 2 {
-                        pose.camera = true;
-                        pose.flash = fi == 0;
                         pose.blast_flash = fi == 1;
                     }
                     let face_left = (yi + pi) % 2 == 1;

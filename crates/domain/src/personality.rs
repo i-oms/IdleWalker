@@ -16,12 +16,8 @@ pub enum Temperament {
     Timid,
     // The clown: everything is a joke, and it copies whatever it sees.
     Goofy,
-    // Mr. Bean: a child in a grown man's body - fidgets, sneaks, pokes, shows off Teddy.
-    Eccentric,
     // An Angry Bird: short-fused and territorial - pecks, flaps, launches, rages, blows up.
     Feisty,
-    // The Pink Panther: suave, sly and silent - slinks, prowls, grooms, charms.
-    Suave,
 }
 impl Temperament {
     pub fn from_i32(v: i32) -> Self {
@@ -31,9 +27,7 @@ impl Temperament {
             2 => Temperament::Aggressive,
             3 => Temperament::Timid,
             4 => Temperament::Goofy,
-            5 => Temperament::Eccentric,
-            6 => Temperament::Feisty,
-            7 => Temperament::Suave,
+            5 => Temperament::Feisty,
             _ => Self::default(),
         }
     }
@@ -85,17 +79,6 @@ pub enum Antic {
     Sleepwalk, // wander forward fast asleep, arms out, Zzz, until it bumps into something
     Daydream,  // gaze off into the distance with a dreamy smile, then snap out of it
     Kiss,      // blow a kiss at the cursor, a heart floating off
-    // Mr. Bean's own.
-    Teddy,  // bring Teddy out of the jacket, gaze at him, make him wave at you, tuck him back
-    Hello, // the awkward hello: arm straight up beside the head, hand wagging stiffly, up on the toes
-    Waggle, // lean in, hands behind the back, and waggle the eyebrows at you
-    Sneak, // look both ways, then creep forward on tiptoe, hands up, and freeze with an innocent face
-    Fuss,  // straighten the tie, brush the lapels, pat the hair
-    Ponder, // finger to the chin, eyes rolled up, then: an idea, finger in the air
-    Jive,  // the Bean dance: elbows pumping, hips twisting, knees bouncing
-    Drive, // mime driving his Mini: hands on the wheel, leaning into the corners, a honk
-    Photo, // hold up a camera, take your picture (flash!), study it and show it off
-    Poke,  // creep up and prod somebody (or the cursor) with one finger, then look innocent
     // The Angry Birds' own. Short, loud and physical: nothing like a Minion's habits.
     Peck,    // hop up and jab somebody (or the cursor) hard with the beak, twice
     Fly,     // flap off along the ground, wings beating, feet trailing
@@ -144,23 +127,13 @@ impl Antic {
             33 => Antic::Sleepwalk,
             34 => Antic::Daydream,
             35 => Antic::Kiss,
-            36 => Antic::Teddy,
-            37 => Antic::Hello,
-            38 => Antic::Waggle,
-            39 => Antic::Sneak,
-            40 => Antic::Fuss,
-            41 => Antic::Ponder,
-            42 => Antic::Jive,
-            43 => Antic::Drive,
-            44 => Antic::Photo,
-            45 => Antic::Poke,
-            46 => Antic::Peck,
-            47 => Antic::Fly,
-            48 => Antic::Launch,
-            49 => Antic::Rage,
-            50 => Antic::Egg,
-            51 => Antic::Inflate,
-            52 => Antic::Blast,
+            36 => Antic::Peck,
+            37 => Antic::Fly,
+            38 => Antic::Launch,
+            39 => Antic::Rage,
+            40 => Antic::Egg,
+            41 => Antic::Inflate,
+            42 => Antic::Blast,
             _ => Self::default(),
         }
     }
@@ -230,108 +203,6 @@ pub struct PersonalityData {
     pub habits: Arr<Habit>,
 }
 rt::handle!(Personality, PersonalityData);
-
-//
-// Mr. Bean. Not one of the Minions: he comes out alongside them when
-// switched on in the menu. Tall, thin, in his tweed jacket and red
-// tie. Shows off Teddy (the Minions come to look), says hello with
-// a stiff wave, waggles his eyebrows at you, creeps about on tiptoe,
-// fusses with his tie and hair, ponders, does the Bean dance, mimes
-// driving his Mini and takes your picture - and pokes anyone standing
-// quietly, and your cursor, with one finger.
-//
-pub static PERSONALITY_BEAN: rt::Global<Personality> = rt::Global::new(|| {
-    Personality::new(
-        "Mr. Bean".to_string(),
-        Temperament::Eccentric,
-        (*LOOK_BEAN),
-        (*EXPRESSION_GORMLESS),
-        (*EXPRESSION_KNOWING),
-        0.95,
-        0.22,
-        0.05,
-        60.0,
-        120.0,
-        4.0,
-        9.0,
-        0.9,
-        0.9,
-        1.0,
-        0.0,
-        1.0,
-        1.0,
-        false,
-        Antic::Poke,
-        Arr::from_vec(vec![
-            Personality::h(Antic::Teddy, 3.5),
-            Personality::h(Antic::Hello, 2.0),
-            Personality::h(Antic::Waggle, 2.0),
-            Personality::h(Antic::Sneak, 2.0),
-            Personality::h(Antic::Fuss, 2.0),
-            Personality::h(Antic::Ponder, 1.5),
-            Personality::h(Antic::Jive, 1.5),
-            Personality::h(Antic::Drive, 2.0),
-            Personality::h(Antic::Photo, 1.8),
-            Personality::h(Antic::Look, 1.5),
-            Personality::h(Antic::Rest, 1.0),
-            Personality::h(Antic::Doze, 1.0),
-            Personality::h(Antic::Whistle, 0.5),
-            Personality::h(Antic::Hiccups, 0.5),
-            Personality::h(Antic::Sneeze, 0.4),
-        ]),
-    )
-});
-
-//
-// The Pink Panther. Not one of the Minions: he comes out alongside
-// them when switched on in the menu. Tall, sleek and silent, all in
-// pink with a long curling tail, yellow eyes and a dark pink nose.
-// Slinks on tiptoe, prowls, grooms a paw, ponders with a finger to
-// the chin, twirls, dances and mimes mischief - and pokes anyone
-// standing quietly, and your cursor, with one claw.
-//
-pub static PERSONALITY_PANTHER: rt::Global<Personality> = rt::Global::new(|| {
-    Personality::new(
-        "Pink Panther".to_string(),
-        Temperament::Suave,
-        (*LOOK_PANTHER),
-        (*EXPRESSION_COOL),
-        (*EXPRESSION_KNOWING),
-        1.0,
-        0.30,
-        0.10,
-        18.0,
-        40.0,
-        4.0,
-        9.0,
-        1.1,
-        0.8,
-        0.9,
-        0.0,
-        1.0,
-        1.0,
-        false,
-        Antic::Poke,
-        Arr::from_vec(vec![
-            Personality::h(Antic::Sneak, 3.0),
-            Personality::h(Antic::Wave, 2.5),
-            Personality::h(Antic::Dance, 2.0),
-            Personality::h(Antic::Twirl, 2.0),
-            Personality::h(Antic::Ponder, 2.0),
-            Personality::h(Antic::Jive, 1.5),
-            Personality::h(Antic::Poke, 1.5),
-            Personality::h(Antic::Look, 2.5),
-            Personality::h(Antic::Rest, 1.5),
-            Personality::h(Antic::Scratch, 1.5),
-            Personality::h(Antic::Joy, 1.2),
-            Personality::h(Antic::Laugh, 1.0),
-            Personality::h(Antic::Doze, 0.8),
-            Personality::h(Antic::Whistle, 1.0),
-            Personality::h(Antic::Sneeze, 0.4),
-            Personality::h(Antic::Hiccups, 0.4),
-        ]),
-    )
-});
 
 //
 // The Minions, in the order they join as the count goes up. Kevin is
@@ -1073,13 +944,11 @@ impl Personality {
         self.cursor_antic = cursor_antic;
         self.habits = habits.clone();
     }
-    // Friendly, goofy, Mr. Bean, a bird or the Panther: waves, dances, plays tag, chats.
+    // Friendly, goofy or a bird: waves, dances, plays tag, chats.
     pub fn warm(mut self) -> bool {
-        return (((((self.temperament == Temperament::Friendly)
+        return (((self.temperament == Temperament::Friendly)
             || (self.temperament == Temperament::Goofy))
-            || (self.temperament == Temperament::Eccentric))
-            || (self.temperament == Temperament::Feisty))
-            || (self.temperament == Temperament::Suave));
+            || (self.temperament == Temperament::Feisty));
     }
     // Which painter draws it and which body it has.
     pub fn figure(mut self) -> Figure {

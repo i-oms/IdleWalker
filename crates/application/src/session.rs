@@ -13,9 +13,7 @@ use std::sync::Arc;
 pub struct Choices {
     pub walkers: bool,
     pub minions: bool,
-    pub bean: bool,
     pub birds: bool,
-    pub panther: bool,
     pub hide_on_move: bool,
     pub corners: bool,
     pub keep_awake: bool,
@@ -131,9 +129,7 @@ impl Session {
         troupe.set_bird_mask(prefs.load_bird_mask());
         troupe.set_dress(prefs.load_dress());
         troupe.set_minions_enabled(prefs.load_minions_enabled());
-        troupe.set_bean_enabled(prefs.load_bean_enabled());
         troupe.set_birds_enabled(prefs.load_birds_enabled());
-        troupe.set_panther_enabled(prefs.load_panther_enabled());
         brains.load(troupe);
 
         let delay_ms = prefs.load_hot_corner_delay();
@@ -157,9 +153,7 @@ impl Session {
         let choices = Choices {
             walkers: prefs.load_walkers_enabled(),
             minions: troupe.minions_enabled(),
-            bean: troupe.bean_enabled(),
             birds: troupe.birds_enabled(),
-            panther: troupe.panther_enabled(),
             hide_on_move: prefs.load_hide_on_move(),
             corners: prefs.load_hot_corners_enabled(),
             keep_awake: prefs.load_keep_awake(),
@@ -372,16 +366,6 @@ impl Session {
                 });
             }
             "minion" => self.set_minion_mask(self.choices.minion_mask ^ (1 << value)),
-            "bean" => {
-                self.choices.bean = !self.choices.bean;
-                self.troupe.set_bean_enabled(self.choices.bean);
-                prefs.save_bean_enabled(self.choices.bean);
-            }
-            "panther" => {
-                self.choices.panther = !self.choices.panther;
-                self.troupe.set_panther_enabled(self.choices.panther);
-                prefs.save_panther_enabled(self.choices.panther);
-            }
             "birds" => {
                 self.choices.birds = !self.choices.birds;
                 self.troupe.set_birds_enabled(self.choices.birds);

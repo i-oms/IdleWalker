@@ -21,7 +21,7 @@ cargo test --release --test selftest
 The folder holds `settings.txt` (menu choices) and `brains.txt` (what the walkers learned).
 `brains.txt` has the same format and, on Windows, the same location as the C# version, so
 an existing cast keeps its memories; menu choices not yet in `settings.txt` are read from
-the C# version's registry key.
+the C# version's registry key. Memories of walkers no longer in the cast are ignored.
 
 ## Platform differences
 
@@ -113,11 +113,12 @@ skips the single-instance check, and on Windows keeps sprites capturable.
 ## Checking the port
 
 `tools/compare/compare.sh /path/to/the/C#/checkout` (Windows, Git Bash) builds both versions and
-compares them:
+compares them. This port's cast is smaller than the C# original's, so **the comparison only passes
+against a checkout with the same cast, and fails against the unmodified original.**
 
-- **Painters:** an FNV hash of the painted canvas for 810 poses across all four figures, which
+- **Painters:** an FNV hash of the painted canvas for 630 poses across both figures, which
   must be byte-identical.
-- **Behaviour:** a seeded 10-minute simulation of all 22 walkers, printing every walker's activity
+- **Behaviour:** a seeded 10-minute simulation of all 20 walkers, printing every walker's activity
   and position every 10 seconds, then what each has learned. Those must match. The line's running
   hash of raw doubles may differ in its last bits, because `exp` and `pow` come from a different
   maths library; that noise has not been seen to change a decision.
