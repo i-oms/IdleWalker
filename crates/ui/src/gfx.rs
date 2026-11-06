@@ -246,6 +246,51 @@ pub fn button(
     hover && m.clicked
 }
 
+/// A tick box with a label; true on the paint that saw its click. A disabled one is
+/// dim and ignores clicks.
+pub fn checkbox(
+    c: &mut Canvas,
+    f: &mut Font,
+    m: &Mouse,
+    x: i32,
+    y: i32,
+    w: i32,
+    h: i32,
+    s: f64,
+    label: &str,
+    checked: bool,
+    enabled: bool,
+) -> bool {
+    let hover = enabled && m.inside(x, y, w, h);
+    if hover {
+        c.round_box(x, y, w, h, 4.0 * s, RIM, 0, 0.0);
+    }
+    let b = (14.0 * s) as i32;
+    let (bx, by) = (x + (6.0 * s) as i32, y + (h - b) / 2);
+    let fill = if checked {
+        if enabled {
+            ACCENT
+        } else {
+            DIM
+        }
+    } else {
+        PANEL
+    };
+    c.round_box(bx, by, b, b, 3.0 * s, fill, DIM, 1.0);
+    let size = (13.0 * s) as f32;
+    let tx = bx + b + (8.0 * s) as i32;
+    c.text_fit(
+        f,
+        tx,
+        y + (h - (size * 1.2) as i32) / 2,
+        x + w - tx,
+        label,
+        size,
+        if enabled { WHITE } else { DIM },
+    );
+    hover && m.clicked
+}
+
 /// A 0..100 slider, showing `value`. Returns the new value while being dragged here.
 pub fn slider(
     c: &mut Canvas,

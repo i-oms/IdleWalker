@@ -3,7 +3,7 @@
 // A windowed app on Windows: no console opens behind it.
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
-use idlewalker_application::{Brains, Preferences, Session, SessionPorts, Updates};
+use idlewalker_application::{Brains, Posh, Preferences, Session, SessionPorts, Updates};
 use idlewalker_domain::rt;
 use idlewalker_platform as platform;
 use std::sync::Arc;
@@ -40,6 +40,7 @@ fn main() {
         preferences.clone(),
         version,
     );
+    let posh = Posh::new(Arc::new(platform::NativeWorkstation));
 
     let session_journal = journal.clone();
     idlewalker_ui::run(idlewalker_ui::Wiring {
@@ -55,6 +56,7 @@ fn main() {
         }),
         sprites: platform::sprite_factory(),
         updates,
+        posh,
         journal,
         // Pixels are never urgent: the painters yield to whatever the user is doing.
         on_painter_start: platform::lower_thread_priority,

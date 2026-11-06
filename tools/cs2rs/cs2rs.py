@@ -1604,7 +1604,7 @@ def mutates_self(body, c):
 
 # ------------------------------------------------------------------ driver
 FILES = ['Settings.cs'] + [f'Domain/{n}.cs' for n in 'Expression HotCorners Look Personality Pose Puff Troupe Walker WalkerAntics WalkerBrain WalkerEyes WalkerMind WalkerStyle'.split()] + \
-        [f'Rendering/{n}.cs' for n in 'Surface SolidPainter MinionPainter BeanPainter BirdPainter PantherPainter FrameRenderer'.split()]
+        [f'Rendering/{n}.cs' for n in 'Surface SolidPainter MinionPainter BirdPainter FrameRenderer'.split()]
 
 def main():
     src, dst = sys.argv[1], sys.argv[2]

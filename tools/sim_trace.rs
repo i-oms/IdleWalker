@@ -50,9 +50,7 @@ fn main() {
     troupe.set_minion_mask(Troupe::all_minions_mask());
     troupe.set_bird_mask(Troupe::all_birds_mask());
     troupe.set_minions_enabled(true);
-    troupe.set_bean_enabled(true);
     troupe.set_birds_enabled(true);
-    troupe.set_panther_enabled(true);
     let dt = 1.0 / 60.0;
     let mut h: u64 = 14695981039346656037;
     for i in 0..60 * 600 {

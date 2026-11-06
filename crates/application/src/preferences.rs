@@ -52,22 +52,10 @@ impl Preferences {
         Settings::MINIONS_ENABLED_BY_DEFAULT
     );
     switch!(
-        load_bean_enabled,
-        save_bean_enabled,
-        "MrBeanEnabled",
-        Settings::MR_BEAN_BY_DEFAULT
-    );
-    switch!(
         load_birds_enabled,
         save_birds_enabled,
         "BirdsEnabled",
         Settings::BIRDS_ENABLED_BY_DEFAULT
-    );
-    switch!(
-        load_panther_enabled,
-        save_panther_enabled,
-        "PantherEnabled",
-        Settings::PANTHER_BY_DEFAULT
     );
     switch!(
         load_hide_on_move,

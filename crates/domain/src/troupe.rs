@@ -13,12 +13,8 @@ pub struct TroupeData {
     pub world: IWorld,
     pub rng: Random,
     pub walkers: Arr<Walker>,
-    pub bean: Walker,
-    pub panther: Walker,
     pub minions_enabled: bool,
-    pub bean_enabled: bool,
     pub birds_enabled: bool,
-    pub panther_enabled: bool,
     pub minion_mask: i32,
     pub bird_mask: i32,
     pub dress: i32,
@@ -44,26 +40,20 @@ impl Troupe {
     fn ctor(mut self, mut world: IWorld, mut rng: Random) {
         self.world = world;
         self.rng = rng;
-        self.bean = Walker::new(world, rng, (*PERSONALITY_BEAN));
-        self.walkers.add(self.bean);
-        self.panther = Walker::new(world, rng, (*PERSONALITY_PANTHER));
-        self.walkers.add(self.panther);
     }
     pub const GREET_DISTANCE_BODIES: f64 = 2.2;
     pub const CONTACT_DISTANCE_BODIES: f64 = 0.9;
     pub const GREET_COOLDOWN_SECONDS: f64 = 12.0;
     //
-    // Every walker created so far: Mr. Bean first (hidden unless he is
-    // switched on), the Pink Panther second (hidden unless he is
-    // switched on), then the Minions in roster order, then the Angry
-    // Birds in flock order. The list only ever grows, so each walker
+    // Every walker created so far: the Minions in roster order, then the
+    // Angry Birds in flock order. The list only ever grows, so each walker
     // keeps its index and its window.
     //
     pub fn walkers(mut self) -> Arr<Walker> {
         return self.walkers.clone();
     }
     pub fn full_cast() -> i32 {
-        return ((2 + Settings::MAX_WALKERS) + Settings::MAX_BIRDS);
+        return (Settings::MAX_WALKERS + Settings::MAX_BIRDS);
     }
     //
     // Which Minions may come out, as a bit mask over Personality.Roster:
@@ -165,33 +155,19 @@ impl Troupe {
         self.bird_mask =
             Troupe::first_n_mask(rt::max_i32(1, rt::min_i32(Settings::MAX_BIRDS, value)));
     }
-    // Whether the Minions come out. Switching them off sends them away at once; Mr. Bean is not affected.
+    // Whether the Minions come out. Switching them off sends them away at once; the birds are not affected.
     pub fn minions_enabled(mut self) -> bool {
         return self.minions_enabled;
     }
     pub fn set_minions_enabled(mut self, mut value: bool) {
         self.minions_enabled = value;
     }
-    // Whether Mr. Bean comes out. Switching him off sends him away at once; the Minions are not affected.
-    pub fn bean_enabled(mut self) -> bool {
-        return self.bean_enabled;
-    }
-    pub fn set_bean_enabled(mut self, mut value: bool) {
-        self.bean_enabled = value;
-    }
-    // Whether the Angry Birds come out. Switching them off sends them away at once; the rest are not affected.
+    // Whether the Angry Birds come out. Switching them off sends them away at once; the Minions are not affected.
     pub fn birds_enabled(mut self) -> bool {
         return self.birds_enabled;
     }
     pub fn set_birds_enabled(mut self, mut value: bool) {
         self.birds_enabled = value;
-    }
-    // Whether the Pink Panther comes out. Switching him off sends him away at once; the rest are not affected.
-    pub fn panther_enabled(mut self) -> bool {
-        return self.panther_enabled;
-    }
-    pub fn set_panther_enabled(mut self, mut value: bool) {
-        self.panther_enabled = value;
     }
     //
     // The overalls colour, 0xRRGGBB, or Settings.RandomDress for a fresh
@@ -235,17 +211,17 @@ impl Troupe {
     pub fn ensure_cast(mut self) {
         'l1: while self.walkers.len() < Troupe::full_cast() {
             let mut i: i32 = self.walkers.len();
-            if i <= (Settings::MAX_WALKERS + 1) {
+            if i < Settings::MAX_WALKERS {
                 self.walkers.add(Walker::new(
                     self.world,
                     self.rng,
-                    (*(*PERSONALITY_ROSTER).at((i - 2))),
+                    (*(*PERSONALITY_ROSTER).at(i)),
                 ));
             } else {
                 self.walkers.add(Walker::new(
                     self.world,
                     self.rng,
-                    (*(*PERSONALITY_BIRD_ROSTER).at(((i - Settings::MAX_WALKERS) - 2))),
+                    (*(*PERSONALITY_BIRD_ROSTER).at((i - Settings::MAX_WALKERS))),
                 ));
             }
         }
@@ -272,13 +248,12 @@ impl Troupe {
             self.spawn_timer = 0.0;
         }
         // Disabled Minions go home - all of them if the group is switched
-        // off, else just the unticked ones - as do disabled birds, and
-        // Mr. Bean and the Panther if off.
+        // off, else just the unticked ones - as do disabled birds.
         {
             let mut m: i32 = 0;
             'l2: while m < Settings::MAX_WALKERS {
                 if !(self.minions_enabled) || (((self.minion_mask >> (m)) & 1) == 0) {
-                    (*self.walkers.at((m + 2))).leave();
+                    (*self.walkers.at(m)).leave();
                 }
                 m += 1;
             }
@@ -287,16 +262,10 @@ impl Troupe {
             let mut b: i32 = 0;
             'l3: while b < Settings::MAX_BIRDS {
                 if !(self.birds_enabled) || (((self.bird_mask >> (b)) & 1) == 0) {
-                    (*self.walkers.at(((Settings::MAX_WALKERS + 2) + b))).leave();
+                    (*self.walkers.at((Settings::MAX_WALKERS + b))).leave();
                 }
                 b += 1;
             }
-        }
-        if !(self.bean_enabled) {
-            self.bean.leave();
-        }
-        if !(self.panther_enabled) {
-            self.panther.leave();
         }
         'l4: for mut walker in self.walkers.items() {
             if walker.is_visible() {
@@ -307,16 +276,14 @@ impl Troupe {
         self.spread();
     }
     // The enabled Minions in roster order, then the enabled birds in
-    // flock order, then Bean and Panther.
+    // flock order.
     pub fn next_to_appear(mut self) -> Walker {
         if self.minions_enabled {
             {
                 let mut m: i32 = 0;
                 'l1: while m < Settings::MAX_WALKERS {
-                    if (((self.minion_mask >> (m)) & 1) != 0)
-                        && (*self.walkers.at((m + 2))).is_hidden()
-                    {
-                        return (*self.walkers.at((m + 2)));
+                    if (((self.minion_mask >> (m)) & 1) != 0) && (*self.walkers.at(m)).is_hidden() {
+                        return (*self.walkers.at(m));
                     }
                     m += 1;
                 }
@@ -327,19 +294,13 @@ impl Troupe {
                 let mut b: i32 = 0;
                 'l2: while b < Settings::MAX_BIRDS {
                     if (((self.bird_mask >> (b)) & 1) != 0)
-                        && (*self.walkers.at(((Settings::MAX_WALKERS + 2) + b))).is_hidden()
+                        && (*self.walkers.at((Settings::MAX_WALKERS + b))).is_hidden()
                     {
-                        return (*self.walkers.at(((Settings::MAX_WALKERS + 2) + b)));
+                        return (*self.walkers.at((Settings::MAX_WALKERS + b)));
                     }
                     b += 1;
                 }
             }
-        }
-        if self.bean_enabled && self.bean.is_hidden() {
-            return self.bean;
-        }
-        if self.panther_enabled && self.panther.is_hidden() {
-            return self.panther;
         }
         return <Walker>::default();
     }
@@ -634,9 +595,9 @@ impl Troupe {
         }
     }
     // A yawn or a dance that has just begun spreads to whoever is near
-    // enough to see it, each according to their nature; so does Mr. Bean
-    // bringing Teddy out, or Matilda laying an egg. A bird slingshotting
-    // past - or Bomb going off - sends the neighbours diving for cover.
+    // enough to see it, each according to their nature; so does Matilda
+    // laying an egg. A bird slingshotting past - or Bomb going off - sends
+    // the neighbours diving for cover.
     pub fn spread(mut self) {
         'l1: for mut walker in self.walkers.items() {
             let mut started: Option<Antic> = walker.take_broadcast();
@@ -652,10 +613,9 @@ impl Troupe {
                 (if scare { 550 } else { 450 })
             }) * walker.scale())
                 / Settings::BASE_PIXEL_SIZE) as f64);
-            // A dance, a Teddy show or an egg before a crowd is applause for the performer.
+            // A dance or an egg before a crowd is applause for the performer.
             let mut show: bool = ((!(toot) && !(scare))
-                && (((started.unwrap() == Antic::Dance) || (started.unwrap() == Antic::Teddy))
-                    || (started.unwrap() == Antic::Egg)));
+                && ((started.unwrap() == Antic::Dance) || (started.unwrap() == Antic::Egg)));
             let mut audience: i32 = 0;
             'l2: for mut other in self.walkers.items() {
                 if ((other == walker) || !(other.is_visible())) || other.is_leaving() {

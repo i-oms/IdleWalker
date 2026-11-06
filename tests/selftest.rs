@@ -170,6 +170,36 @@ fn brains_survive_on_disk() {
         "v3 table spread over the 81 fine situations"
     );
 
+    // A file from when the cast was larger still loads: a walker no longer in the cast
+    // is skipped, and so is a friendship with one, without touching anyone else.
+    std::fs::write(
+        &path,
+        "# IdleWalker brains v4\n[Retired]\nexp=7\n[Bob]\nexp=42\nfond=Retired,0.5;Kevin,0.25\n",
+    )
+    .unwrap();
+    let older = Troupe::new(world(), Random::with_seed(888));
+    store.load(older);
+    let bob = older
+        .walkers()
+        .items()
+        .find(|w| w.personality.name == "Bob")
+        .unwrap();
+    assert_eq!(
+        bob.experience(),
+        42,
+        "the walkers still here keep their memories"
+    );
+    assert_eq!(
+        bob.friendships(),
+        1,
+        "only the friendship with a walker still here"
+    );
+    assert_eq!(
+        sum(older, |w| w.experience()),
+        42,
+        "nobody picks up the retired walker's memories"
+    );
+
     // A foreign file must not crash and must not load.
     std::fs::write(&path, "# foreign file\n[Bob]\nexp=9999\n").unwrap();
     let foreign = Troupe::new(world(), Random::with_seed(777));
@@ -183,6 +213,44 @@ fn brains_survive_on_disk() {
 
     let _ = std::fs::remove_dir_all(&dir);
     let _ = HashMap::<i32, i32>::new();
+}
+
+#[test]
+fn birds_hop_and_rouse() {
+    let t = Troupe::new(world(), Random::with_seed(1234));
+    t.ensure_cast();
+    t.set_minions_enabled(false);
+    t.set_birds_enabled(true);
+    t.set_bird_mask(Troupe::all_birds_mask());
+    let (mut hops, mut rouses) = (0, 0);
+    for i in 0..60 * 300 {
+        t.step(1.0 / 60.0, Point::new(960, 200), i > 10, false);
+        for w in t.walkers().items().filter(|w| w.is_visible()) {
+            assert_eq!(
+                w.personality.look.figure,
+                Figure::Bird,
+                "only birds are out"
+            );
+            let pose = w.current_pose();
+            assert!(
+                pose.body_dy.is_finite() && pose.stretch_y > 0.0 && pose.stretch_x > 0.0,
+                "{} in {:?}: dy={} sx={} sy={}",
+                w.personality.name,
+                w.mode,
+                pose.body_dy,
+                pose.stretch_x,
+                pose.stretch_y
+            );
+            if w.mode == Mode::Walk && pose.body_dy < 0.0 {
+                hops += 1;
+            }
+            if (w.mode == Mode::Rest || w.mode == Mode::Look) && pose.puff_up > 0.0 {
+                rouses += 1;
+            }
+        }
+    }
+    assert!(hops > 0, "a walking bird leaves the ground");
+    assert!(rouses > 0, "a resting bird fluffs itself up now and then");
 }
 
 #[test]

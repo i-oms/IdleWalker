@@ -11,7 +11,7 @@ use super::tray::Node;
 pub fn closes_menu(id: &str) -> bool {
     matches!(
         id,
-        "brightness" | "brains" | "check-update" | "about" | "exit" | "dress-custom"
+        "brightness" | "posh" | "brains" | "check-update" | "about" | "exit" | "dress-custom"
     )
 }
 

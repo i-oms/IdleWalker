@@ -57,12 +57,6 @@ impl Walker {
                 Temperament::Goofy => {
                     return 0.85;
                 }
-                Temperament::Eccentric => {
-                    return 0.9;
-                }
-                Temperament::Suave => {
-                    return 1.15; // slow, deliberate Panther blink
-                }
                 _ => {
                     return 1.0;
                 }
@@ -164,14 +158,6 @@ impl Walker {
                                 (*target) = (*EXPRESSION_HAPPY);
                                 (*rate) = 10.0;
                             }
-                            Temperament::Eccentric => {
-                                (*target) = (*EXPRESSION_SUSPICIOUS);
-                                (*rate) = 10.0;
-                            }
-                            Temperament::Suave => {
-                                (*target) = (*EXPRESSION_KNOWING);
-                                (*rate) = 10.0;
-                            }
                             _ => {}
                         }
                     }
@@ -230,12 +216,6 @@ impl Walker {
                             }
                             Temperament::Feisty => {
                                 (*target) = (*EXPRESSION_STERN);
-                            }
-                            Temperament::Eccentric => {
-                                (*target) = (*EXPRESSION_GORMLESS);
-                            }
-                            Temperament::Suave => {
-                                (*target) = (*EXPRESSION_COOL);
                             }
                             _ => {
                                 (*target) = (*EXPRESSION_KNOWING);
@@ -352,28 +332,6 @@ impl Walker {
                         EyeBeat::Viewer
                     } else {
                         EyeBeat::SideEye
-                    });
-                }
-                Temperament::Eccentric => {
-                    self.eye_beat = (if (r < 0.4) {
-                        EyeBeat::Shifty
-                    } else {
-                        (if (r < 0.7) {
-                            EyeBeat::SideEye
-                        } else {
-                            EyeBeat::Viewer
-                        })
-                    });
-                }
-                Temperament::Suave => {
-                    self.eye_beat = (if (r < 0.5) {
-                        EyeBeat::Viewer
-                    } else {
-                        (if (r < 0.8) {
-                            EyeBeat::SideEye
-                        } else {
-                            EyeBeat::Shifty
-                        })
                     });
                 }
                 _ => {

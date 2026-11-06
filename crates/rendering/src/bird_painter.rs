@@ -1244,7 +1244,7 @@ impl BirdPainter {
         self.begin();
         let mut vb: f64 = (v + self.pose.body_dy);
         let mut ub: f64 = (u - ((self.lean * 0.12) * rt::max_f64(0.0, (v - 4.0))));
-        let mut body_dist: f64 = self.body_sdf(ub, vb);
+        let mut body_dist: f64 = self.fluff(ub, vb, self.body_sdf(ub, vb));
         // Depth of the body's surface here for the (rare) sorted prop.
         let mut rx: f64 = (self.body_rx * self.grow);
         let mut bulge: f64 = (((rx * rx) - (ub * ub)) - ((vb - self.body_v) * (vb - self.body_v)));
@@ -1360,8 +1360,17 @@ impl BirdPainter {
             nx,
             ny,
             nz,
-            0.3,
-            16.0,
+            BirdPainter::PLUMAGE_SPEC,
+            BirdPainter::PLUMAGE_SHINE,
+            rt::mref(&mut lr),
+            rt::mref(&mut lg),
+            rt::mref(&mut lb),
+        );
+        self.plumage(
+            u,
+            v,
+            ny,
+            nz,
             rt::mref(&mut lr),
             rt::mref(&mut lg),
             rt::mref(&mut lb),
@@ -1372,20 +1381,69 @@ impl BirdPainter {
             (self.body_r * 0.72),
             (self.body_g * 0.72),
             (self.body_b * 0.72),
-            ((self.cov((v - 3.2)) * 0.35) * cov),
+            ((BirdPainter::clamp(((3.6 - v) / 2.4)) * 0.35) * cov),
         );
     }
-    // The lighter chest patch, clipped to the silhouette.
+    // Feathers take the light softly: a low, broad sheen rather than a hard
+    // highlight.
+    pub const PLUMAGE_SPEC: f64 = 0.10;
+    pub const PLUMAGE_SHINE: f64 = 7.0;
+    // How much fine feather detail the screen can show: none below about four
+    // pixels per feather, full from six or so. `px` is units per pixel.
+    pub fn detail(mut self) -> f64 {
+        return BirdPainter::clamp(((0.45 - self.px) / 0.2));
+    }
+    // A silhouette of soft down rather than a clean edge; rougher when puffed
+    // up. Only gentle waves, several pixels long, so the edge stays smooth.
+    pub fn fluff(mut self, mut u: f64, mut v: f64, mut dist: f64) -> f64 {
+        if (dist).abs() > 0.7 {
+            return dist;
+        }
+        let mut a: f64 = (v - self.body_v).atan2(u);
+        let mut amp: f64 =
+            ((0.03 * self.detail()) + ((self.grow - 1.0) * (0.15 + (0.15 * self.detail()))));
+        return (dist + (amp * ((a * 9.0).sin() + (0.6 * ((a * 14.0) + 1.3).sin()))));
+    }
+    // Soft scallops of overlapping feathers across the lit colour, plus a faint
+    // glow where the down catches the sky at the rim. The additive part is
+    // what shows on a black bird. The scallops are smooth and fade out at
+    // small sizes, so nothing turns into pixel noise.
+    pub fn plumage(
+        mut self,
+        mut u: f64,
+        mut v: f64,
+        mut ny: f64,
+        mut nz: f64,
+        lr: &mut f64,
+        lg: &mut f64,
+        lb: &mut f64,
+    ) {
+        let mut tau: f64 = (2.0 * std::f64::consts::PI);
+        let mut wave: f64 = (0.5 * ((u - self.belly_u) * (tau / 2.2)).cos());
+        let mut under: f64 = (0.5 + (0.5 * ((v * (tau / 1.8)) + wave).cos()));
+        // Fades towards the rim, where the rows are too foreshortened to see.
+        let mut face_on: f64 = ((if (nz > 0.0) { (nz * nz) } else { 0.0 }) * self.detail());
+        let mut tone: f64 = (1.0 - ((0.06 * under) * face_on));
+        let mut sheen: f64 = ((0.025 * (1.0 - under)) * face_on);
+        let mut edge: f64 = (1.0 - (if (nz > 0.0) { nz } else { 0.0 }));
+        let mut rim: f64 = (((edge * edge) * edge) * BirdPainter::clamp((0.6 + (0.4 * ny))) * 0.22);
+        (*lr) = ((((*lr) * tone) + sheen) + (((0.72 + (0.28 * (*lr))) - (*lr)) * rim));
+        (*lg) = ((((*lg) * tone) + sheen) + (((0.78 + (0.22 * (*lg))) - (*lg)) * rim));
+        (*lb) = ((((*lb) * tone) + sheen) + (((0.88 + (0.12 * (*lb))) - (*lb)) * rim));
+    }
+    // The lighter chest patch, clipped to the silhouette. Its edge feathers into
+    // the body colour instead of being cut out.
     pub fn belly(mut self, mut u: f64, mut v: f64, mut body_dist: f64) {
         if self.belly_rx <= 0.2 {
             return;
         }
-        let mut cov: f64 = self.cov(BirdPainter::ellipse(
+        let mut edge: f64 = (BirdPainter::ellipse(
             (u - self.belly_u),
             (v - BirdPainter::BELLY_V),
             self.belly_rx,
             BirdPainter::BELLY_RY,
-        ));
+        ) + (0.15 * ((u * 2.4) + (v * 1.3)).sin()));
+        let mut cov: f64 = BirdPainter::clamp((0.5 - (edge / 0.8)));
         if cov <= 0.0 {
             return;
         }
@@ -1414,8 +1472,17 @@ impl BirdPainter {
             nx,
             ny,
             nz,
-            0.25,
-            16.0,
+            (BirdPainter::PLUMAGE_SPEC * 0.8),
+            BirdPainter::PLUMAGE_SHINE,
+            rt::mref(&mut lr),
+            rt::mref(&mut lg),
+            rt::mref(&mut lb),
+        );
+        self.plumage(
+            u,
+            v,
+            ny,
+            nz,
             rt::mref(&mut lr),
             rt::mref(&mut lg),
             rt::mref(&mut lb),
@@ -2018,6 +2085,14 @@ impl BirdPainter {
         let mut ey: f64 = (dy / self.eye_ry);
         let mut white: f64 = ((((ex * ex) + (ey * ey)).sqrt() - 1.0) * self.eye_ry);
         let mut cov_white: f64 = (self.cov(white) * vis);
+        // A soft hollow in the feathers around the eye, so it sits in the head
+        // rather than on it.
+        self.over(
+            (self.body_r * 0.5),
+            (self.body_g * 0.5),
+            (self.body_b * 0.5),
+            ((self.cov((white - 0.2)) * 0.3) * vis),
+        );
         if cov_white > 0.0 {
             let mut nx: f64 = <f64>::default();
             let mut ny: f64 = <f64>::default();

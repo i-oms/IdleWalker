@@ -4,10 +4,8 @@ use crate::prelude::*;
 
 //
 // One frame's worth of body positions. Angles are in degrees, lengths
-// in units (a Minion is 18 units tall, Mr. Bean 28); the painter turns
-// it all into pixels. The head and reach fields only mean something to
-// a figure with a neck and long arms (Mr. Bean); the Minion painter
-// ignores them.
+// in units (a Minion is 18 units tall); the painter turns it all into
+// pixels.
 //
 #[derive(Clone, Default, Copy)]
 pub struct Pose {
@@ -22,22 +20,11 @@ pub struct Pose {
     pub arm_far: f64,
     pub fore_near: f64,
     pub fore_far: f64,
-    pub reach_near: f64,
-    pub reach_far: f64,
     pub point_near: bool,
     pub lean: f64,
     pub body_dy: f64,
     pub stretch_x: f64,
     pub stretch_y: f64,
-    pub head_turn: f64,
-    pub head_dip: f64,
-    pub tiptoe: f64,
-    pub teddy: bool,
-    pub teddy_wave: f64,
-    pub wheel: bool,
-    pub wheel_turn: f64,
-    pub camera: bool,
-    pub flash: bool,
     pub egg: bool,
     pub puff_up: f64,
     pub blast_flash: bool,
@@ -60,9 +47,7 @@ impl Pose {
     }
     // True if drawing this pose would give the same picture as drawing other.
     pub fn same_as(self, mut o: Pose) -> bool {
-        return (((((((((((((((((((((((((((((((((((self
-            .face
-            .same_as(o.face)
+        return ((((((((((((((((((((((((self.face.same_as(o.face)
             && (self.gaze_x == o.gaze_x))
             && (self.gaze_y == o.gaze_y))
             && (self.yaw == o.yaw))
@@ -73,22 +58,11 @@ impl Pose {
             && (self.arm_far == o.arm_far))
             && (self.fore_near == o.fore_near))
             && (self.fore_far == o.fore_far))
-            && (self.reach_near == o.reach_near))
-            && (self.reach_far == o.reach_far))
             && (self.point_near == o.point_near))
             && (self.lean == o.lean))
             && (self.body_dy == o.body_dy))
             && (self.stretch_x == o.stretch_x))
             && (self.stretch_y == o.stretch_y))
-            && (self.head_turn == o.head_turn))
-            && (self.head_dip == o.head_dip))
-            && (self.tiptoe == o.tiptoe))
-            && (self.teddy == o.teddy))
-            && (self.teddy_wave == o.teddy_wave))
-            && (self.wheel == o.wheel))
-            && (self.wheel_turn == o.wheel_turn))
-            && (self.camera == o.camera))
-            && (self.flash == o.flash))
             && (self.egg == o.egg))
             && (self.puff_up == o.puff_up))
             && (self.blast_flash == o.blast_flash))

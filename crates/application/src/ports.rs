@@ -115,6 +115,52 @@ pub trait BrainStore: Send + Sync {
     fn location(&self) -> Option<PathBuf>;
 }
 
+// ---- The workstation ---------------------------------------------------------------------
+
+/// Which operating system the workstation runs, for the use cases that must do things
+/// differently on each: they ask the port instead of the compiler, so every plan can be
+/// tested on any OS.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Os {
+    Windows,
+    MacOs,
+    Linux,
+}
+
+/// What a program did when run to completion.
+#[derive(Clone, Debug, Default)]
+pub struct RunResult {
+    pub success: bool,
+    pub stdout: String,
+    pub stderr: String,
+}
+
+/// The person's shells, programs and files, as the terminal-prompt use case needs them.
+/// Every method may be called from any thread; `run` and `final_address` are slow.
+pub trait Workstation: Send + Sync {
+    fn os(&self) -> Os;
+    fn home_dir(&self) -> Option<PathBuf>;
+    fn temp_dir(&self) -> PathBuf;
+    fn env(&self, name: &str) -> Option<String>;
+    /// A program on the PATH, as the shells see it.
+    fn find_program(&self, name: &str) -> Option<PathBuf>;
+    /// Runs a program and waits for it. Slow: off the UI thread.
+    fn run(&self, program: &str, args: &[&str]) -> RunResult;
+    /// `None` when the file is missing or not text.
+    fn read_text(&self, path: &std::path::Path) -> Option<String>;
+    /// Creates the folders on the way.
+    fn write_text(&self, path: &std::path::Path, text: &str) -> Result<(), String>;
+    fn exists(&self, path: &std::path::Path) -> bool;
+    fn make_dir(&self, path: &std::path::Path) -> Result<(), String>;
+    fn remove_file(&self, path: &std::path::Path);
+    /// A folder and everything in it.
+    fn remove_dir(&self, path: &std::path::Path) -> Result<(), String>;
+    /// The files under a folder, `depth` levels deep (1 is the folder itself).
+    fn list_files(&self, dir: &std::path::Path, depth: u32) -> Vec<PathBuf>;
+    /// The address a redirecting link ends at. Slow, and needs the network.
+    fn final_address(&self, url: &str) -> Option<String>;
+}
+
 // ---- The network -------------------------------------------------------------------------
 
 /// Where releases are published.

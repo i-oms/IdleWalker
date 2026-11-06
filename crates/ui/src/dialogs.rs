@@ -129,6 +129,7 @@ pub enum Kind {
     Colour(ColourDialog),
     Menu(super::menu_panel::MenuPanel),
     Update(UpdateDialog),
+    Posh(Box<super::posh_dialog::PoshDialog>),
 }
 
 impl Dialog {
@@ -258,6 +259,28 @@ impl Dialog {
             } => {
                 return Outcome::Close;
             }
+            WindowEvent::KeyboardInput {
+                event:
+                    KeyEvent {
+                        logical_key,
+                        state: ElementState::Pressed,
+                        ..
+                    },
+                ..
+            } => {
+                // Typing narrows the theme list in the terminal prompt window.
+                let Kind::Posh(p) = &mut self.kind else {
+                    return Outcome::None;
+                };
+                match logical_key {
+                    Key::Named(NamedKey::Backspace) => {
+                        p.filter.pop();
+                    }
+                    Key::Named(NamedKey::Space) => p.filter.push(' '),
+                    Key::Character(t) => p.filter.push_str(t.as_str()),
+                    _ => return Outcome::None,
+                }
+            }
             WindowEvent::CursorMoved { position, .. } => {
                 self.mouse.x = position.x as i32;
                 self.mouse.y = position.y as i32;
@@ -312,6 +335,7 @@ impl Dialog {
             Kind::Colour(c) => c.draw(&mut canvas, font, &mouse, &mut self.drag, scale),
             Kind::Menu(p) => p.draw(&mut canvas, font, &mouse, scale),
             Kind::Update(u) => u.draw(&mut canvas, font, &mouse, scale, &self.services),
+            Kind::Posh(p) => p.draw(&mut canvas, font, &mouse, scale, &self.services),
         };
         // Softbuffer's format is 0RGB.
         for p in buffer.iter_mut() {

@@ -44,17 +44,13 @@ impl std::fmt::Display for HairStyle {
 pub enum Figure {
     #[default]
     Minion, // a yellow capsule in overalls and goggles
-    Bean,    // a tall thin man in a tweed jacket: Mr. Bean
-    Bird,    // a round Angry Bird with a beak, crest and tail
-    Panther, // a tall sleek pink panther, bipedal like the cartoon
+    Bird, // a round Angry Bird with a beak, crest and tail
 }
 impl Figure {
     pub fn from_i32(v: i32) -> Self {
         match v {
             0 => Figure::Minion,
-            1 => Figure::Bean,
-            2 => Figure::Bird,
-            3 => Figure::Panther,
+            1 => Figure::Bird,
             _ => Self::default(),
         }
     }
@@ -130,17 +126,9 @@ rt::handle!(Anatomy, AnatomyData);
 pub static ANATOMY_MINION: rt::Global<Anatomy> =
     rt::Global::new(|| Anatomy::new(18.0, 12.5, 8.0, 10.2, 3.0, 9, 20, 10, 10.0, 48, 6.4));
 
-// Tall and thin, long legs, a head on a neck.
-pub static ANATOMY_BEAN: rt::Global<Anatomy> =
-    rt::Global::new(|| Anatomy::new(28.0, 24.9, 23.0, 19.4, 11.0, 8, 30, 22, 16.0, 56, 5.0));
-
 // Round and hoppy: a ball of feathers with its eyes up top and a beak in front.
 pub static ANATOMY_BIRD: rt::Global<Anatomy> =
     rt::Global::new(|| Anatomy::new(14.0, 10.2, 7.6, 8.4, 2.5, 8, 16, 9, 8.0, 48, 5.2));
-
-// Tall and sleek like the cartoon Pink Panther: long legs, a narrow waist, a cat head on a neck.
-pub static ANATOMY_PANTHER: rt::Global<Anatomy> =
-    rt::Global::new(|| Anatomy::new(26.0, 22.6, 20.6, 17.8, 10.0, 8, 28, 20, 15.0, 56, 5.2));
 
 impl Anatomy {
     fn alloc__() -> Anatomy {
@@ -217,12 +205,6 @@ pub struct LookData {
 }
 rt::handle!(Look, LookData);
 
-// Mr. Bean: the painter knows what he looks like.
-pub static LOOK_BEAN: rt::Global<Look> = rt::Global::new(|| Look::new_5(Figure::Bean));
-
-// The Pink Panther: the painter knows what he looks like.
-pub static LOOK_PANTHER: rt::Global<Look> = rt::Global::new(|| Look::new_5(Figure::Panther));
-
 impl Look {
     fn alloc__() -> Look {
         let mut this = Look::from_data(LookData::default());
@@ -281,37 +263,16 @@ impl Look {
     fn ctor_4(mut self, mut one_eye: bool, mut hair: HairStyle) {
         self.ctor(one_eye, hair, Look::BROWN, Look::BROWN);
     }
-    pub fn new_5(mut figure: Figure) -> Look {
-        let mut this = Self::alloc__();
-        this.ctor_5(figure);
-        this
-    }
-    fn ctor_5(mut self, mut figure: Figure) {
-        self.figure = figure;
-        self.one_eye = false;
-        self.hair = HairStyle::None;
-        self.kind = BirdKind::Red;
-        self.near_iris = Look::BROWN;
-        self.far_iris = self.near_iris;
-    }
     pub const BROWN: i32 = 0x6b4423;
     pub const GREEN: i32 = 0x3e8e4b;
     pub const BLUE: i32 = 0x4a72b5;
     pub const AMBER: i32 = 0xb07a2a;
     // The body this figure has.
     pub fn anatomy(mut self) -> Anatomy {
-        return (if (self.figure == Figure::Bean) {
-            (*ANATOMY_BEAN)
+        return (if (self.figure == Figure::Bird) {
+            (*ANATOMY_BIRD)
         } else {
-            (if (self.figure == Figure::Bird) {
-                (*ANATOMY_BIRD)
-            } else {
-                (if (self.figure == Figure::Panther) {
-                    (*ANATOMY_PANTHER)
-                } else {
-                    (*ANATOMY_MINION)
-                })
-            })
+            (*ANATOMY_MINION)
         });
     }
     //

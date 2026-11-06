@@ -21,7 +21,7 @@ cargo test --release --test selftest
 The folder holds `settings.txt` (menu choices) and `brains.txt` (what the walkers learned).
 `brains.txt` has the same format and, on Windows, the same location as the C# version, so
 an existing cast keeps its memories; menu choices not yet in `settings.txt` are read from
-the C# version's registry key.
+the C# version's registry key. Memories of walkers no longer in the cast are ignored.
 
 ## Platform differences
 
@@ -38,6 +38,10 @@ The C# version leaned on Windows-only behaviour. Not all of it exists elsewhere:
 | Brightness, external monitors         | Yes (DDC/CI) | DDC/CI on Apple Silicon (private IOKit calls), otherwise software dimming | With `ddcutil`                                              | With `ddcutil`                                                                    |
 | Hidden from screenshots               | Yes          | Only where macOS still honours it                                 | **No**                                                  | **No**                                                                        |
 | Anti-idle nudge                       | Yes          | `caffeinate`                                                    | `systemd-inhibit` and the X screen-saver reset              | `systemd-inhibit`                                                                 |
+| Terminal prompt: install and update   | winget, else the install script | Homebrew, else the install script into `~/.local/bin` | The install script into `~/.local/bin` (needs `curl` and `unzip`) | Same as X11 |
+| Terminal prompt: uninstall            | winget, scoop or Chocolatey as installed, else its folder is deleted | Homebrew, else the binary is deleted | The binary is deleted; one under `/usr/local` needs `sudo`, which it says | Same as X11 |
+| Terminal prompt: shells               | PowerShell 7, Windows PowerShell, Git Bash, cmd (Clink), nu | zsh, bash, fish, PowerShell, nu | bash, zsh, fish, PowerShell, nu | Same as X11 |
+| Terminal prompt: terminal font        | VS Code family, Windows Terminal, the console host (`HKCU\Console`) | VS Code family, Terminal (AppleScript, may ask for Automation permission), iTerm2 (`defaults export`/`import`, iTerm2 must be closed) | VS Code family, GNOME Terminal (`gsettings`), Konsole (its profile file) | Same as X11 |
 
 Differences on every OS, compared with the C# version:
 
@@ -73,9 +77,12 @@ crates/
 ├── rendering/     presenter: the software painters and the paint threads. Depends on domain.
 │                  Its port: SpriteSink, the window a finished frame is shown in.
 ├── application/   use cases: the per-frame session (idle, hot corners, keep-awake, full-screen,
-│                  brain saves, menu choices), preferences, brains and update checks. Depends on
-│                  domain. Its ports (ports.rs): Desktop, Displays, PreferenceStore, BrainStore,
-│                  ReleaseFeed, Journal.
+│                  brain saves, menu choices), preferences, brains, update checks and the
+│                  terminal prompt (posh.rs: Oh My Posh, its themes, the shell profiles and the
+│                  terminal fonts; jsonc.rs edits VS Code's and Windows Terminal's settings
+│                  without disturbing their comments). Depends on domain. Its ports (ports.rs):
+│                  Desktop, Displays, PreferenceStore, BrainStore, ReleaseFeed, Journal,
+│                  Workstation.
 ├── platform/      adapters: one OS backend each in windows.rs, macos.rs and linux.rs (the same
 │                  functions in each), the port implementations (adapters.rs), and settings.txt
 │                  and brains.txt (files.rs). Depends on domain, rendering and application.
@@ -91,6 +98,13 @@ tools/
 **Adding an OS capability.** Declare it on the port that needs it (usually `Desktop` in
 `crates/application/src/ports.rs`), add the function to all three backends, and forward to it in
 `crates/platform/src/adapters.rs`. The UI and the use cases only ever call the port.
+
+**The terminal prompt.** `posh.rs` decides everything (which installer, which profile file, what
+line goes in it) and the `Workstation` port only runs programs and reads and writes files, so the
+whole plan for every OS is tested in memory on any OS. The port reports the OS; the use case never
+asks the compiler. A profile gets one block between `# >>> IdleWalker: Oh My Posh >>>` and
+`# <<< IdleWalker: Oh My Posh <<<` (Lua comments for Clink), which is what "Remove" takes out
+again. `IDLEWALKER_TEST_MENU=posh` opens the window at start-up.
 
 **Translated code.** `crates/domain/` (except `lib.rs`), `crates/rendering/` (except `lib.rs`,
 `render_thread.rs` and `sprite_sink.rs`) and `settings.rs` were
@@ -113,11 +127,12 @@ skips the single-instance check, and on Windows keeps sprites capturable.
 ## Checking the port
 
 `tools/compare/compare.sh /path/to/the/C#/checkout` (Windows, Git Bash) builds both versions and
-compares them:
+compares them. This port's cast is smaller than the C# original's, so **the comparison only passes
+against a checkout with the same cast, and fails against the unmodified original.**
 
-- **Painters:** an FNV hash of the painted canvas for 810 poses across all four figures, which
+- **Painters:** an FNV hash of the painted canvas for 630 poses across both figures, which
   must be byte-identical.
-- **Behaviour:** a seeded 10-minute simulation of all 22 walkers, printing every walker's activity
+- **Behaviour:** a seeded 10-minute simulation of all 20 walkers, printing every walker's activity
   and position every 10 seconds, then what each has learned. Those must match. The line's running
   hash of raw doubles may differ in its last bits, because `exp` and `pow` come from a different
   maths library; that noise has not been seen to change a decision.

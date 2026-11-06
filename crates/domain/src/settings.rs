@@ -89,12 +89,8 @@ impl Settings {
     pub const WALKERS_ENABLED_BY_DEFAULT: bool = true;
     // Whether the Minions are on until the tray menu says otherwise.
     pub const MINIONS_ENABLED_BY_DEFAULT: bool = true;
-    // Whether Mr. Bean is on until the tray menu says otherwise. He and the Minions are independent of each other.
-    pub const MR_BEAN_BY_DEFAULT: bool = false;
-    // Whether the Angry Birds are on until the tray menu says otherwise. Independent of the Minions and Mr. Bean.
+    // Whether the Angry Birds are on until the tray menu says otherwise. Independent of the Minions.
     pub const BIRDS_ENABLED_BY_DEFAULT: bool = false;
-    // Whether the Pink Panther is on until the tray menu says otherwise. Independent of the rest.
-    pub const PANTHER_BY_DEFAULT: bool = false;
     // Whether a mouse move sends everyone back underground until the tray menu says otherwise.
     pub const HIDE_ON_MOVE_BY_DEFAULT: bool = true;
     // Whether the hot corners are on until the tray menu says otherwise.

@@ -67,58 +67,6 @@ impl Walker {
                     self.stop_facing(((self.cursor_x) as f64), Mode::Antic);
                     return;
                 }
-                Antic::Hello => {
-                    self.antic_seconds = 2.2;
-                    self.stop_facing(((self.cursor_x) as f64), Mode::Antic);
-                    return;
-                }
-                Antic::Waggle => {
-                    self.antic_seconds = 2.4;
-                    self.stop_facing(((self.cursor_x) as f64), Mode::Antic);
-                    return;
-                }
-                Antic::Poke => {
-                    self.antic_seconds = 2.8;
-                    self.stop_facing(
-                        (if !self.goal_target.is_null() {
-                            self.goal_target.centre_x()
-                        } else {
-                            ((self.cursor_x) as f64)
-                        }),
-                        Mode::Antic,
-                    );
-                    return;
-                }
-                Antic::Teddy => {
-                    self.antic_seconds = 3.6;
-                    self.broadcast = Some(Antic::Teddy);
-                    if self.bean {
-                        self.add_bonus(0.2);
-                    }
-                }
-                Antic::Sneak => {
-                    self.antic_seconds = 3.4;
-                }
-                Antic::Fuss => {
-                    self.antic_seconds = 2.8;
-                }
-                Antic::Ponder => {
-                    self.antic_seconds = 3.0;
-                }
-                Antic::Jive => {
-                    self.antic_seconds = 3.2;
-                    self.broadcast = Some(Antic::Dance);
-                }
-                Antic::Drive => {
-                    self.antic_seconds = 3.6;
-                    self.broadcast = Some(Antic::Drive);
-                }
-                Antic::Photo => {
-                    self.antic_seconds = 3.4;
-                    self.broadcast = Some(Antic::Photo);
-                    self.stop_facing(((self.cursor_x) as f64), Mode::Antic);
-                    return;
-                }
                 Antic::Peck => {
                     self.antic_seconds = 2.2;
                     self.stop_facing(
@@ -384,29 +332,6 @@ impl Walker {
                             (shuffle / (self.body.stride_cells * ((self.scale) as f64)));
                     }
                 }
-                Antic::Sneak => {
-                    // Creeping forward on tiptoe, small quick steps, until the floor runs out.
-                    if (t > 0.9) && (t < 2.6) {
-                        let mut creep: f64 =
-                            (((0.3 * Settings::WALK_SPEED) * self.size_factor) * dt);
-                        if !(self.move_x((((self.facing) as f64) * creep))) {
-                            self.mode_time = rt::max_f64(self.mode_time, 2.6);
-                        }
-                        self.walk_phase +=
-                            ((1.5 * creep) / (self.body.stride_cells * ((self.scale) as f64)));
-                    }
-                }
-                Antic::Poke => {
-                    // The prod lands: whoever it was jumps.
-                    if (self.antic_stage == 0) && (t >= 0.7) {
-                        self.antic_stage = 1;
-                        if !self.goal_target.is_null() {
-                            self.goal_target.spook(self.cx);
-                            self.note_prank_landed(self.goal_target);
-                            self.goal_target.note_pranked(self);
-                        }
-                    }
-                }
                 Antic::Toot => {
                     if (self.antic_stage == 0) && (t >= 0.55) {
                         self.antic_stage = 1;
@@ -610,37 +535,6 @@ impl Walker {
                 }
                 Antic::Kiss => {
                     self.set_mood((*EXPRESSION_HAPPY), 1.5);
-                }
-                Antic::Teddy => {
-                    self.set_mood((*EXPRESSION_FOND), 1.5);
-                }
-                Antic::Hello => {
-                    self.set_mood((*EXPRESSION_GRIN), 1.0);
-                }
-                Antic::Waggle => {
-                    self.set_mood((*EXPRESSION_KNOWING), 1.2);
-                }
-                Antic::Sneak => {
-                    self.set_mood((*EXPRESSION_MISCHIEVOUS), 1.5);
-                }
-                Antic::Fuss => {
-                    self.set_mood((*EXPRESSION_PROUD), 1.5);
-                }
-                Antic::Ponder => {
-                    self.set_mood((*EXPRESSION_HAPPY), 1.2);
-                }
-                Antic::Jive => {
-                    self.set_mood((*EXPRESSION_GRIN), 1.2);
-                }
-                Antic::Drive => {
-                    self.set_mood((*EXPRESSION_SMUG), 1.5);
-                }
-                Antic::Photo => {
-                    self.set_mood((*EXPRESSION_HAPPY), 1.5);
-                }
-                Antic::Poke => {
-                    self.set_mood((*EXPRESSION_MISCHIEVOUS), 1.5);
-                    self.goal_target = <Walker>::default();
                 }
                 Antic::Peck => {
                     self.set_mood((*EXPRESSION_DETERMINED), 1.2);
@@ -984,168 +878,6 @@ impl Walker {
                     (*rate) = 16.0;
                     (*at_cursor) = true;
                 }
-                Antic::Teddy => {
-                    if t < 0.6 {
-                        // Rummaging in the jacket.
-                        (*target) = (*EXPRESSION_GORMLESS);
-                        (*gx) = 0.3;
-                        (*gy) = -0.4;
-                    } else if (t < 1.5) || (t >= 2.4) {
-                        // Gazing fondly at Teddy.
-                        (*target) = (*EXPRESSION_FOND);
-                        (*rate) = 10.0;
-                        (*gx) = 0.45;
-                        (*gy) = -0.4;
-                    } else {
-                        // Making Teddy wave at you.
-                        (*target) = (*EXPRESSION_GRIN);
-                        (*rate) = 18.0;
-                        (*at_cursor) = true;
-                    }
-                }
-                Antic::Hello => {
-                    (*target) = (if (t < 0.35) {
-                        (*EXPRESSION_SURPRISED)
-                    } else {
-                        (*EXPRESSION_GRIN)
-                    });
-                    (*rate) = 22.0;
-                    (*at_cursor) = true;
-                }
-                Antic::Waggle => {
-                    // The eyebrows go up and down on the beat, over the knowing smirk.
-                    let mut e: Expression = (*EXPRESSION_KNOWING);
-                    e.brow_raise = (if ((((t / 0.25) as i32) % 2) == 0) {
-                        0.95
-                    } else {
-                        -0.15
-                    });
-                    e.mouth_dx = 0.4;
-                    (*target) = e;
-                    (*rate) = 40.0;
-                    (*at_cursor) = true;
-                }
-                Antic::Sneak => {
-                    if t < 0.9 {
-                        // Is the coast clear? Eyes one way, then the other.
-                        (*target) = (*EXPRESSION_SHIFTY);
-                        (*rate) = 16.0;
-                        (*gx) = (if (t < 0.45) { -0.9 } else { 0.9 });
-                        (*gy) = 0.05;
-                    } else if t < 2.6 {
-                        (*target) = (*EXPRESSION_MISCHIEVOUS);
-                        (*rate) = 16.0;
-                        (*gx) = 0.6;
-                        (*gy) = -0.1;
-                    } else {
-                        // Caught in the act: the picture of innocence.
-                        (*target) = (*EXPRESSION_WHISTLING);
-                        (*rate) = 20.0;
-                        (*at_cursor) = true;
-                    }
-                }
-                Antic::Fuss => {
-                    (*target) = (if (t < 1.8) {
-                        (*EXPRESSION_SERIOUS)
-                    } else {
-                        (*EXPRESSION_SMUG)
-                    });
-                    (*rate) = 12.0;
-                    (*gx) = 0.2;
-                    (*gy) = (if (t < 1.8) { -0.5 } else { 0.1 });
-                }
-                Antic::Ponder => {
-                    if t < 2.1 {
-                        (*target) = (*EXPRESSION_THINKING);
-                        (*rate) = 10.0;
-                        (*gx) = 0.2;
-                        (*gy) = 0.6;
-                    } else if t < 2.4 {
-                        (*target) = (*EXPRESSION_SURPRISED);
-                        (*rate) = 40.0;
-                        (*gx) = 0.2;
-                        (*gy) = 0.1;
-                    } else {
-                        (*target) = (*EXPRESSION_HAPPY);
-                        (*rate) = 20.0;
-                        (*at_cursor) = true;
-                    }
-                }
-                Antic::Jive => {
-                    (*target) = (if ((((t / 0.8) as i32) % 2) == 0) {
-                        (*EXPRESSION_GRIN)
-                    } else {
-                        (*EXPRESSION_LAUGH)
-                    });
-                    (*rate) = 18.0;
-                    (*at_cursor) = true;
-                }
-                Antic::Drive => {
-                    if t < 2.9 {
-                        // Eyes on the road, leaning into the bends.
-                        (*target) = (*EXPRESSION_FOCUSED);
-                        (*gx) = (0.5 * (t * 4.2).sin());
-                        (*gy) = 0.05;
-                    } else if t < 3.2 {
-                        // The honk: leaning on it.
-                        (*target) = (*EXPRESSION_SURPRISED);
-                        (*rate) = 30.0;
-                        (*at_cursor) = true;
-                    } else {
-                        (*target) = (*EXPRESSION_SMUG);
-                        (*rate) = 14.0;
-                        (*at_cursor) = true;
-                    }
-                }
-                Antic::Photo => {
-                    if t < 1.0 {
-                        // Lining up the shot.
-                        (*target) = (*EXPRESSION_FOCUSED);
-                        (*rate) = 14.0;
-                        (*at_cursor) = true;
-                    } else if t < 1.35 {
-                        // The flash.
-                        (*target) = (*EXPRESSION_SURPRISED);
-                        (*rate) = 40.0;
-                        (*at_cursor) = true;
-                    } else if t < 2.2 {
-                        // Studying the little print.
-                        (*target) = (*EXPRESSION_CURIOUS);
-                        (*rate) = 12.0;
-                        (*gx) = 0.45;
-                        (*gy) = -0.45;
-                    } else {
-                        // Showing it off: look what I did.
-                        (*target) = (*EXPRESSION_GRIN);
-                        (*rate) = 18.0;
-                        (*at_cursor) = true;
-                    }
-                }
-                Antic::Poke => {
-                    if t < 1.2 {
-                        (*target) = (*EXPRESSION_MISCHIEVOUS);
-                        if !self.goal_target.is_null() {
-                            self.look_at(
-                                self.goal_target.centre_x(),
-                                self.goal_target.eye_y(),
-                                &mut *gx,
-                                &mut *gy,
-                            );
-                        } else {
-                            (*at_cursor) = true;
-                        }
-                    } else if t < 1.9 {
-                        // Examining the finger.
-                        (*target) = (*EXPRESSION_CURIOUS);
-                        (*gx) = 0.5;
-                        (*gy) = -0.3;
-                    } else {
-                        // Wasn't me.
-                        (*target) = (*EXPRESSION_WHISTLING);
-                        (*rate) = 12.0;
-                        (*at_cursor) = true;
-                    }
-                }
                 Antic::Peck => {
                     (*target) = (*EXPRESSION_DETERMINED);
                     (*rate) = 24.0;
@@ -1321,41 +1053,6 @@ impl Walker {
                 Antic::Kiss => {
                     return 10.0;
                 }
-                Antic::Teddy => {
-                    return ((if ((t >= 1.5) && (t < 2.4)) { 5 } else { 20 }) as f64);
-                }
-                Antic::Hello => {
-                    return 5.0;
-                }
-                Antic::Sneak => {
-                    return ((if (t < 0.9) {
-                        15
-                    } else {
-                        (if (t < 2.6) { 58 } else { 0 })
-                    }) as f64);
-                }
-                Antic::Fuss => {
-                    return 10.0;
-                }
-                Antic::Ponder => {
-                    return 20.0;
-                }
-                Antic::Jive => {
-                    return Walker::dance_yaw(t, 0.0);
-                }
-                Antic::Drive => {
-                    return 20.0;
-                }
-                Antic::Photo => {
-                    return 5.0;
-                }
-                Antic::Poke => {
-                    return ((if (t < 1.2) {
-                        40
-                    } else {
-                        (if (t < 1.9) { 25 } else { 0 })
-                    }) as f64);
-                }
                 Antic::Peck => {
                     return ((if (t < 1.4) { 45 } else { 20 }) as f64);
                 }
@@ -1459,7 +1156,6 @@ impl Walker {
                         });
                         (*pose).body_dy = Walker::quantise((0.45 + (0.6 * droop)));
                         (*pose).lean = (0.2 + ((droop * 4.0).floor() / 16.0));
-                        (*pose).head_dip = Walker::quantise((0.3 + (0.9 * droop))); // (a head on a neck nods right off)
                         (*pose).zzz = true;
                         (*pose).decor_phase = Walker::q16((((t - 2.1) / 1.6) % 1.0));
                     }
@@ -1915,167 +1611,6 @@ impl Walker {
                         (*pose).lean = -0.1;
                     }
                 }
-                Antic::Teddy => {
-                    if t < 0.6 {
-                        // The near hand goes into the jacket.
-                        let mut e: f64 = Walker::ease((t / 0.6));
-                        (*pose).arm_near = Walker::q2((20.0 * e));
-                        (*pose).fore_near = Walker::q2((220.0 * e));
-                        (*pose).reach_near = Walker::q2((60.0 * e));
-                        (*pose).head_dip = Walker::quantise((0.4 * e));
-                    } else if t < 3.1 {
-                        // Out comes Teddy, held up in front of the chest.
-                        let mut e: f64 = Walker::ease(rt::min_f64(1.0, ((t - 0.6) / 0.4)));
-                        Walker::teddy_pose(&mut *pose, e);
-                        (*pose).teddy = (e > 0.4);
-                        (*pose).head_dip = Walker::quantise((0.4 + (0.2 * e)));
-                        if (t >= 1.5) && (t < 2.4) {
-                            // Teddy waves at you; so does his owner's grin.
-                            (*pose).teddy_wave = Walker::q16(
-                                (0.5 + (0.5
-                                    * ((((t - 1.5) * 2.0) * std::f64::consts::PI) * 3.0).sin())),
-                            );
-                            (*pose).head_dip = 0.0;
-                        }
-                        self.breathe(&mut *pose);
-                    } else {
-                        // Back into the jacket.
-                        let mut e: f64 = (1.0 - Walker::ease(rt::min_f64(1.0, ((t - 3.1) / 0.5))));
-                        Walker::teddy_pose(&mut *pose, e);
-                        (*pose).teddy = (e > 0.4);
-                        (*pose).head_dip = Walker::quantise((0.4 * e));
-                    }
-                }
-                Antic::Hello => {
-                    Walker::hello_pose(&mut *pose, t);
-                }
-                Antic::Waggle => {
-                    // Leaning in with the hands behind the back, head cocked forward.
-                    Walker::hands_behind(&mut *pose);
-                    (*pose).lean = 0.2;
-                    (*pose).head_dip = 0.25;
-                    self.breathe(&mut *pose);
-                }
-                Antic::Sneak => {
-                    if t < 0.9 {
-                        // A look over each shoulder, hands up at the chest.
-                        (*pose).head_turn = ((if (t < 0.45) { -55 } else { 55 }) as f64);
-                        (*pose).arm_near = 35.0;
-                        (*pose).fore_near = 95.0;
-                        (*pose).arm_far = 35.0;
-                        (*pose).fore_far = 95.0;
-                        self.breathe(&mut *pose);
-                    } else if t < 2.6 {
-                        // Tiptoeing: hunched, knees high, hands up like a cartoon burglar.
-                        (*pose).tiptoe = 1.0;
-                        (*pose).lean = 0.35;
-                        (*pose).walking = true;
-                        (*pose).walk_phase = self.walk_phase;
-                        (*pose).arm_near = 45.0;
-                        (*pose).fore_near = 100.0;
-                        (*pose).arm_far = 45.0;
-                        (*pose).fore_far = 100.0;
-                        (*pose).head_dip = 0.3;
-                        (*pose).body_dy = Walker::quantise(
-                            (0.4 + ((0.3
-                                * (1.0 - ((self.walk_phase * 4.0) * std::f64::consts::PI).cos()))
-                                / 2.0)),
-                        );
-                    } else {
-                        // Frozen: hands behind the back, rocking on the heels, whistling.
-                        Walker::hands_behind(&mut *pose);
-                        (*pose).lean = (-(rt::round_even(((0.1 * (t * 2.2).sin()) * 8.0))) / 8.0);
-                        (*pose).head_dip = -0.15;
-                        self.breathe(&mut *pose);
-                    }
-                }
-                Antic::Fuss => {
-                    if t < 1.0 {
-                        // Both hands at the collar, straightening the tie, chin up.
-                        let mut e: f64 = Walker::ease(rt::min_f64(1.0, (t / 0.3)));
-                        let mut jig: f64 = (if (t > 0.3) {
-                            Walker::q2((5.0 * (((t * 2.0) * std::f64::consts::PI) * 3.0).sin()))
-                        } else {
-                            0.0
-                        });
-                        (*pose).arm_near = Walker::q2((10.0 * e));
-                        (*pose).fore_near = (Walker::q2((205.0 * e)) + jig);
-                        (*pose).reach_near = Walker::q2((70.0 * e));
-                        (*pose).arm_far = -(Walker::q2((10.0 * e)));
-                        (*pose).fore_far = (-(Walker::q2((205.0 * e))) + jig);
-                        (*pose).reach_far = Walker::q2((70.0 * e));
-                        (*pose).head_dip = -(Walker::quantise((0.35 * e)));
-                    } else if t < 1.8 {
-                        // The near hand brushes down the lapel, twice.
-                        let mut f: f64 = (((t - 1.0) / 0.4) % 1.0);
-                        (*pose).arm_near = Walker::q2((10.0 + (15.0 * f)));
-                        (*pose).fore_near = Walker::q2((205.0 - (55.0 * f)));
-                        (*pose).reach_near = 70.0;
-                        (*pose).arm_far = -10.0;
-                        (*pose).fore_far = -205.0;
-                        (*pose).reach_far = 70.0;
-                        (*pose).head_dip = -0.2;
-                    } else {
-                        // A pat of the hair.
-                        let mut e: f64 = Walker::ease(rt::min_f64(1.0, ((t - 1.8) / 0.3)));
-                        let mut pat: f64 = (if (t > 2.1) {
-                            Walker::q2((6.0 * (((t * 2.0) * std::f64::consts::PI) * 3.0).sin()))
-                        } else {
-                            0.0
-                        });
-                        (*pose).arm_near = Walker::q2((25.0 + (125.0 * e)));
-                        (*pose).fore_near = (Walker::q2((150.0 - (108.0 * e))) + pat);
-                        (*pose).reach_near = Walker::q2((40.0 * e));
-                        (*pose).lean = (-(rt::round_even(((0.1 * e) * 8.0))) / 8.0);
-                        (*pose).head_turn = Walker::q2((-12.0 * e));
-                    }
-                }
-                Antic::Ponder => {
-                    if t < 2.1 {
-                        // Finger to the chin, other arm across the belly, tapping.
-                        let mut e: f64 = Walker::ease(rt::min_f64(1.0, (t / 0.4)));
-                        let mut tap: f64 = ((if ((t > 0.5)
-                            && ((((t * 2.0) * std::f64::consts::PI) * 2.0).sin() > 0.0))
-                        {
-                            4
-                        } else {
-                            0
-                        }) as f64);
-                        (*pose).arm_near = Walker::q2((10.0 * e));
-                        (*pose).fore_near = (Walker::q2((212.0 * e)) + tap);
-                        (*pose).reach_near = Walker::q2((75.0 * e));
-                        (*pose).point_near = (e > 0.5);
-                        (*pose).arm_far = -(Walker::q2((10.0 * e)));
-                        (*pose).fore_far = Walker::q2((30.0 * e));
-                        (*pose).reach_far = Walker::q2((50.0 * e));
-                        (*pose).head_dip = -(Walker::quantise((0.3 * e)));
-                        (*pose).head_turn = Walker::q2((15.0 * e));
-                        self.breathe(&mut *pose);
-                    } else {
-                        // An idea: finger in the air, up on the toes, "!".
-                        let mut e: f64 = Walker::ease(rt::min_f64(1.0, ((t - 2.1) / 0.2)));
-                        (*pose).arm_near = Walker::q2((10.0 + (150.0 * e)));
-                        (*pose).fore_near = Walker::q2((212.0 - (232.0 * e)));
-                        (*pose).reach_near = Walker::q2((75.0 * (1.0 - e)));
-                        (*pose).point_near = true;
-                        (*pose).arm_far = -10.0;
-                        (*pose).fore_far = 30.0;
-                        (*pose).reach_far = 50.0;
-                        (*pose).bubble = (t < 2.7);
-                        (*pose).stretch_y = (1.0 + (0.03 * e));
-                        (*pose).body_dy = -(Walker::quantise((0.2 * e)));
-                        (*pose).tiptoe = (rt::round_even((e * 4.0)) / 4.0);
-                    }
-                }
-                Antic::Jive => {
-                    Walker::jive_pose(&mut *pose, t);
-                }
-                Antic::Drive => {
-                    Walker::drive_pose(&mut *pose, t);
-                }
-                Antic::Photo => {
-                    Walker::photo_pose(&mut *pose, t);
-                }
                 Antic::Peck => {
                     self.peck_pose(&mut *pose, t);
                 }
@@ -2097,179 +1632,8 @@ impl Walker {
                 Antic::Blast => {
                     self.blast_pose(&mut *pose, t);
                 }
-                Antic::Poke => {
-                    let mut aim: f64 = (if !self.goal_target.is_null() {
-                        self.aim_at(self.goal_target.centre_x(), self.goal_target.shoulder_y())
-                    } else {
-                        self.aim_at(((self.cursor_x) as f64), ((self.cursor_y) as f64))
-                    });
-                    if t < 0.5 {
-                        // The finger comes out and the arm extends.
-                        let mut e: f64 = Walker::ease((t / 0.5));
-                        (*pose).arm_near = Walker::q2((aim * e));
-                        (*pose).point_near = (e > 0.4);
-                        (*pose).lean = (rt::round_even(((0.3 * e) * 8.0)) / 8.0);
-                    } else if t < 1.2 {
-                        // Two prods.
-                        let mut f: f64 = (((t - 0.5) / 0.35) % 1.0);
-                        let mut jab: f64 = (if (f < 0.5) {
-                            (f / 0.5)
-                        } else {
-                            (1.0 - ((f - 0.5) / 0.5))
-                        });
-                        (*pose).arm_near = aim;
-                        (*pose).fore_near = -(Walker::q2((25.0 * (1.0 - jab))));
-                        (*pose).point_near = true;
-                        (*pose).lean = (rt::round_even(((0.3 + (0.2 * jab)) * 8.0)) / 8.0);
-                    } else if t < 1.9 {
-                        // Examining the finger.
-                        (*pose).arm_near = 40.0;
-                        (*pose).fore_near = 120.0;
-                        (*pose).reach_near = 50.0;
-                        (*pose).point_near = true;
-                        (*pose).head_dip = 0.35;
-                        (*pose).head_turn = 10.0;
-                    } else {
-                        // Hands behind the back: wasn't me.
-                        Walker::hands_behind(&mut *pose);
-                        (*pose).lean = (-(rt::round_even(((0.12 * (t * 2.2).sin()) * 8.0))) / 8.0);
-                        (*pose).head_dip = -0.2;
-                        self.breathe(&mut *pose);
-                    }
-                }
                 _ => {}
             }
-        }
-    }
-    // Teddy held up beside the chest in the near hand, where he can be
-    // seen (e is how far the arm has come out of the jacket, 0..1).
-    pub fn teddy_pose(pose: &mut Pose, mut e: f64) {
-        (*pose).arm_near = Walker::q2((20.0 + (40.0 * e)));
-        (*pose).fore_near = Walker::q2((220.0 - (70.0 * e)));
-        (*pose).reach_near = Walker::q2((60.0 * (1.0 - e)));
-        (*pose).arm_far = Walker::q2((15.0 * e));
-        (*pose).fore_far = Walker::q2((20.0 * e));
-    }
-    // Mr. Bean's hello: the arm shoots straight up beside the head and
-    // the hand wags stiffly from the wrist, up on the toes, chin up.
-    pub fn hello_pose(pose: &mut Pose, mut t: f64) {
-        let mut e: f64 = Walker::ease(rt::min_f64(1.0, (t / 0.25)));
-        (*pose).arm_near = Walker::q2((160.0 * e));
-        (*pose).fore_near = (if (t > 0.3) {
-            Walker::q2((-15.0 + (14.0 * (((t * 2.0) * std::f64::consts::PI) * 4.0).sin())))
-        } else {
-            Walker::q2((-15.0 * e))
-        });
-        (*pose).tiptoe = (rt::round_even((e * 4.0)) / 4.0);
-        (*pose).head_dip = -(Walker::quantise((0.3 * e)));
-        (*pose).stretch_y = (1.0 + (0.02 * e));
-    }
-    // The Bean dance: elbows tucked and pumping, hips twisting, knees
-    // bouncing, head bobbing, a note on every other beat.
-    pub fn jive_pose(pose: &mut Pose, mut t: f64) {
-        let mut b: f64 = (t / Walker::DANCE_BEAT);
-        let mut bounce: f64 = ((1.0 - ((b * 2.0) * std::f64::consts::PI).cos()) / 2.0);
-        let mut side: f64 = (b * std::f64::consts::PI).sin();
-        (*pose).body_dy = Walker::quantise((0.6 * bounce));
-        (*pose).arm_near = Walker::q2((35.0 + (25.0 * side)));
-        (*pose).fore_near = Walker::q2((100.0 - (20.0 * side)));
-        (*pose).reach_near = Walker::q2((30.0 * side));
-        (*pose).arm_far = -(Walker::q2((35.0 - (25.0 * side))));
-        (*pose).fore_far = -(Walker::q2((100.0 + (20.0 * side))));
-        (*pose).reach_far = -(Walker::q2((30.0 * side)));
-        (*pose).walking = true;
-        (*pose).walk_phase = ((b * 12.0).floor() / 24.0);
-        (*pose).head_dip = Walker::quantise((0.3 * bounce));
-        (*pose).lean = (rt::round_even(((0.15 * side) * 8.0)) / 8.0);
-        (*pose).note = true;
-        (*pose).decor_phase = Walker::q16(((b / 2.0) % 1.0));
-    }
-    // Miming the Mini: both hands on the wheel, turning it through the
-    // bends and leaning with it, a little bounce as if idling, then a
-    // long honk with the head forward.
-    pub fn drive_pose(pose: &mut Pose, mut t: f64) {
-        let mut steer: f64 = (t * 4.2).sin();
-        let mut turn: f64 = (t * 2.1).sin();
-        if t < 2.9 {
-            (*pose).wheel = true;
-            (*pose).wheel_turn = (rt::round_even((turn * 8.0)) / 8.0);
-            (*pose).arm_near = Walker::q2((55.0 + (18.0 * steer)));
-            (*pose).fore_near = Walker::q2((55.0 - (12.0 * steer)));
-            (*pose).reach_near = Walker::q2(45.0);
-            (*pose).arm_far = Walker::q2((55.0 - (18.0 * steer)));
-            (*pose).fore_far = Walker::q2((55.0 + (12.0 * steer)));
-            (*pose).reach_far = Walker::q2(45.0);
-            (*pose).lean = (rt::round_even(((0.22 * steer) * 8.0)) / 8.0);
-            (*pose).head_turn = Walker::q2((18.0 * steer));
-            (*pose).head_dip = Walker::quantise((0.1 + ((0.08 * (1.0 - (t * 9.0).cos())) / 2.0)));
-            (*pose).body_dy = Walker::quantise(((0.25 * (1.0 - (t * 9.0).cos())) / 2.0));
-        } else if t < 3.2 {
-            // Both hands on the horn, leaning on it.
-            (*pose).wheel = true;
-            (*pose).wheel_turn = 0.0;
-            (*pose).arm_near = 60.0;
-            (*pose).fore_near = 60.0;
-            (*pose).reach_near = 50.0;
-            (*pose).arm_far = -60.0;
-            (*pose).fore_far = -60.0;
-            (*pose).reach_far = 50.0;
-            (*pose).lean = 0.35;
-            (*pose).head_dip = 0.3;
-            (*pose).bubble = true;
-        } else {
-            // Sitting back, pleased with himself.
-            (*pose).arm_near = -20.0;
-            (*pose).fore_near = -60.0;
-            (*pose).arm_far = 20.0;
-            (*pose).fore_far = 60.0;
-            (*pose).lean = -0.2;
-            (*pose).head_dip = -0.15;
-        }
-    }
-    // The holiday snap: hands bring the camera up, hold it steady for
-    // the flash, drop it to study the print, then hold the print out.
-    pub fn photo_pose(pose: &mut Pose, mut t: f64) {
-        if t < 0.5 {
-            let mut e: f64 = Walker::ease(rt::min_f64(1.0, (t / 0.4)));
-            (*pose).camera = true;
-            (*pose).arm_near = Walker::q2((120.0 * e));
-            (*pose).fore_near = Walker::q2((90.0 * e));
-            (*pose).reach_near = Walker::q2((55.0 * e));
-            (*pose).arm_far = -(Walker::q2((120.0 * e)));
-            (*pose).fore_far = -(Walker::q2((90.0 * e)));
-            (*pose).reach_far = Walker::q2((55.0 * e));
-            (*pose).head_dip = Walker::quantise((0.1 * e));
-        } else if t < 1.35 {
-            (*pose).camera = true;
-            (*pose).flash = ((t >= 1.0) && (t < 1.2));
-            (*pose).arm_near = 120.0;
-            (*pose).fore_near = 90.0;
-            (*pose).reach_near = 55.0;
-            (*pose).arm_far = -120.0;
-            (*pose).fore_far = -90.0;
-            (*pose).reach_far = 55.0;
-            (*pose).head_dip = 0.1;
-        } else if t < 2.2 {
-            // The print: head down over the hands at the chest.
-            let mut e: f64 = Walker::ease(rt::min_f64(1.0, ((t - 1.35) / 0.3)));
-            (*pose).camera = (e < 0.5);
-            (*pose).arm_near = Walker::q2((120.0 - (70.0 * e)));
-            (*pose).fore_near = Walker::q2((90.0 + (40.0 * e)));
-            (*pose).reach_near = Walker::q2((55.0 - (10.0 * e)));
-            (*pose).arm_far = -(Walker::q2((120.0 - (70.0 * e))));
-            (*pose).fore_far = -(Walker::q2((90.0 + (40.0 * e))));
-            (*pose).reach_far = Walker::q2((55.0 - (10.0 * e)));
-            (*pose).head_dip = Walker::quantise((0.1 + (0.45 * e)));
-        } else {
-            // Showing it to you, nodding.
-            let mut nod: f64 =
-                ((1.0 - ((((t - 2.2) * 2.0) * std::f64::consts::PI) / 0.6).cos()) / 2.0);
-            (*pose).arm_near = Walker::q2(70.0);
-            (*pose).fore_near = Walker::q2(120.0);
-            (*pose).reach_near = 45.0;
-            (*pose).arm_far = -20.0;
-            (*pose).fore_far = 30.0;
-            (*pose).head_dip = Walker::quantise((0.25 * nod));
         }
     }
     // The birds'. Wings are the arms: raised wings read on every figure,
@@ -2386,10 +1750,6 @@ impl Walker {
     // A jig on the spot: bouncing on the beat, feet stepping, arms
     // pumping up and down in turn, a note floating off every two beats.
     pub fn dance_pose(mut self, pose: &mut Pose, mut t: f64) {
-        if self.bean {
-            Walker::jive_pose(&mut *pose, t);
-            return;
-        }
         let mut b: f64 = (t / Walker::DANCE_BEAT);
         let mut bounce: f64 = ((1.0 - ((b * 2.0) * std::f64::consts::PI).cos()) / 2.0); // down on the beat, up between
         let mut side: f64 = (b * std::f64::consts::PI).sin(); // which arm is up, swapping each beat
@@ -2441,7 +1801,6 @@ impl Walker {
         (*pose).stretch_y = (1.0 + (0.06 * up));
         (*pose).body_dy = -(Walker::quantise((0.3 * up)));
         (*pose).lean = (-(rt::round_even(((0.25 * up) * 8.0))) / 8.0);
-        (*pose).head_dip = -(Walker::quantise((0.3 * up)));
     }
     pub fn hiccup_jolt(mut t: f64) -> f64 {
         let mut at: Arr<f64> = (*WALKER_HICCUP_TIMES).clone();
@@ -2508,18 +1867,6 @@ impl Walker {
                         (*EXPRESSION_WORRIED)
                     });
                     (*rate) = ((if (t < 1.3) { 30 } else { 10 }) as f64);
-                }
-                Reaction::Wince => {
-                    (*target) = (if (t < 1.0) {
-                        (*EXPRESSION_WINCE)
-                    } else {
-                        (*EXPRESSION_DISAPPROVING)
-                    });
-                    (*rate) = ((if (t < 1.0) { 30 } else { 10 }) as f64);
-                }
-                Reaction::Waft => {
-                    (*target) = (*EXPRESSION_DISGUST);
-                    (*rate) = 20.0;
                 }
                 Reaction::Bristle => {
                     (*target) = (if (t < 0.9) {
@@ -2595,37 +1942,6 @@ impl Walker {
                     (*pose).fore_far = -(Walker::q2((80.0 * down)));
                     (*pose).lean = 0.2;
                 }
-                Reaction::Wince => {
-                    // Both hands fly up to the cheeks and stay there.
-                    let mut up: f64 = (if (t < 0.15) {
-                        Walker::ease((t / 0.15))
-                    } else {
-                        1.0
-                    });
-                    (*pose).arm_near = Walker::q2((150.0 * up));
-                    (*pose).fore_near = Walker::q2((100.0 * up));
-                    (*pose).reach_near = Walker::q2((60.0 * up));
-                    (*pose).arm_far = -(Walker::q2((150.0 * up)));
-                    (*pose).fore_far = -(Walker::q2((100.0 * up)));
-                    (*pose).reach_far = Walker::q2((60.0 * up));
-                    (*pose).lean = (-(rt::round_even(((0.2 * up) * 8.0))) / 8.0);
-                    (*pose).head_dip = Walker::quantise((0.2 * up));
-                }
-                Reaction::Waft => {
-                    // Recoiling, head turned away, one hand fanning in front of the nose.
-                    let mut up: f64 = Walker::ease(rt::min_f64(1.0, (t / 0.2)));
-                    let mut fan: f64 = (if (t > 0.2) {
-                        Walker::q2((12.0 * (((t * 2.0) * std::f64::consts::PI) * 3.0).sin()))
-                    } else {
-                        0.0
-                    });
-                    (*pose).arm_near = Walker::q2((120.0 * up));
-                    (*pose).fore_near = (Walker::q2((120.0 * up)) + fan);
-                    (*pose).reach_near = Walker::q2((50.0 * up));
-                    (*pose).lean = (-(rt::round_even(((0.25 * up) * 8.0))) / 8.0);
-                    (*pose).head_turn = Walker::q2((-25.0 * up));
-                    (*pose).head_dip = -(Walker::quantise((0.2 * up)));
-                }
                 Reaction::Bristle => {
                     // Puffed up and shaking, beak snapping: back off.
                     let mut up: f64 = Walker::ease(rt::min_f64(1.0, (t / 0.2)));
@@ -2665,12 +1981,6 @@ impl Walker {
                 }
                 Reaction::Cower => {
                     return 10.0;
-                }
-                Reaction::Wince => {
-                    return 10.0;
-                }
-                Reaction::Waft => {
-                    return 25.0;
                 }
                 Reaction::Bristle => {
                     return 15.0;

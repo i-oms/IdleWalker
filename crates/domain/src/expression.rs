@@ -120,27 +120,6 @@ pub static EXPRESSION_KNOWING: rt::Global<Expression> = rt::Global::new(|| {
     )
 });
 
-// Eyes wide, brows up, lips just parted: Mr. Bean's everyday stare at the world.
-pub static EXPRESSION_GORMLESS: rt::Global<Expression> = rt::Global::new(|| {
-    Expression::new(
-        0.0, 0.0, 0.0, 0.3, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.05, 0.1, 1.5, 0.0, 0.0, 0.0, 0.0,
-    )
-});
-
-// Lids half down, brows soft, a small warm smile: looking at Teddy.
-pub static EXPRESSION_FOND: rt::Global<Expression> = rt::Global::new(|| {
-    Expression::new(
-        0.35, 0.0, 0.0, 0.2, -0.2, 0.0, 1.0, 0.0, 0.0, 0.0, 0.7, 0.0, 1.3, 0.0, 0.0, 0.0, 0.0,
-    )
-});
-
-// Brows down, lids heavy, mouth tight: Mr. Bean's hard stare at whoever did that.
-pub static EXPRESSION_GLARE: rt::Global<Expression> = rt::Global::new(|| {
-    Expression::new(
-        0.45, 0.0, 0.0, -0.3, 0.7, 0.0, 1.0, 0.0, 0.0, 0.0, -0.2, 0.0, 1.3, 0.0, 0.0, 0.0, 0.0,
-    )
-});
-
 // Brows up in the middle, bottom lip out: a sulk.
 pub static EXPRESSION_SULKY: rt::Global<Expression> = rt::Global::new(|| {
     Expression::new(
@@ -330,20 +309,6 @@ pub static EXPRESSION_SNEEZE: rt::Global<Expression> = rt::Global::new(|| {
 pub static EXPRESSION_DIZZY: rt::Global<Expression> = rt::Global::new(|| {
     Expression::new(
         0.35, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.3, 1.0, -0.2, 0.15, 1.7, 0.0, 0.0, 1.0, 0.0,
-    )
-});
-
-// One eye screwed shut, teeth bared: that looked painful.
-pub static EXPRESSION_WINCE: rt::Global<Expression> = rt::Global::new(|| {
-    Expression::new(
-        0.5, 0.6, 1.0, 0.3, -0.4, 0.0, 1.0, 0.0, 0.0, 0.0, -0.5, 0.3, 1.8, 0.0, 1.0, 0.0, 0.0,
-    )
-});
-
-// Squinting, brows down, mouth pulled aside with the tongue out: what is that smell?
-pub static EXPRESSION_DISGUST: rt::Global<Expression> = rt::Global::new(|| {
-    Expression::new(
-        0.0, 0.5, 0.0, -0.1, 0.5, 0.0, 1.0, 0.0, 0.0, 0.0, -0.6, 0.3, 1.5, 0.3, 0.0, 0.0, 0.5,
     )
 });
 

@@ -209,8 +209,6 @@ pub fn build(c: &Choices, desktop: &dyn Desktop) -> Vec<Node> {
             enabled: w,
             children: minions,
         },
-        check("bean", "Mr. Bean", w, c.bean),
-        check("panther", "Pink Panther", w, c.panther),
         Node::Sub {
             label: "Angry Birds".into(),
             enabled: w,
@@ -224,6 +222,7 @@ pub fn build(c: &Choices, desktop: &dyn Desktop) -> Vec<Node> {
         },
         Node::Sep,
         item("brightness", "Brightness..."),
+        item("posh", "Terminal prompt..."),
         check("keep-awake", "Keep system awake", true, c.keep_awake),
         check("startup", desktop.startup_label(), true, c.startup),
         item("brains", "Brains..."),
@@ -386,6 +385,7 @@ mod backend {
             vec![
                 entry("Settings...", "menu"),
                 entry("Brightness...", "brightness"),
+                entry("Terminal prompt...", "posh"),
                 MenuItem::Separator,
                 entry("Exit", "exit"),
             ]
