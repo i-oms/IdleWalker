@@ -1614,6 +1614,9 @@ impl Posh {
                         log.push(format!("Terminal: font set to {FONT_MONO} in its \"{}\" profile. Open a new Terminal window.", t.target));
                     } else {
                         log.extend(tail(&r));
+                        if apple_events_denied(&r) {
+                            log.push("Terminal: macOS did not let IdleWalker control Terminal. Allow it under System Settings > Privacy & Security > Automation, then try again.".into());
+                        }
                         log.push(format!("Terminal: could not set the font; pick {FONT_MONO} under Settings > Profiles > Text."));
                     }
                 }
@@ -1943,6 +1946,13 @@ fn iterm_fonts_set(plist: &str, postscript_name: &str) -> (String, usize) {
     }
     out.push_str(rest);
     (out, n)
+}
+
+/// Whether osascript was refused by macOS's Automation permission rather than by the
+/// script: "Not authorized to send Apple events to Terminal. (-1743)".
+fn apple_events_denied(r: &RunResult) -> bool {
+    let text = format!("{}\n{}", r.stdout, r.stderr);
+    text.contains("-1743") || text.contains("Not authorized to send Apple events")
 }
 
 /// Whether Terminal's profile has a font whose name holds `needle`: the font is an
@@ -2458,6 +2468,44 @@ mod tests {
             !fake.exists(Path::new("/tmp/idlewalker-iterm2.plist")),
             "temp file removed"
         );
+    }
+
+    #[test]
+    fn a_refused_apple_event_is_told_apart_from_a_broken_script() {
+        let denied = RunResult {
+            success: false,
+            stdout: String::new(),
+            stderr: "execution error: Not authorized to send Apple events to Terminal. (-1743)"
+                .into(),
+        };
+        assert!(apple_events_denied(&denied));
+        let syntax = RunResult {
+            success: false,
+            stdout: String::new(),
+            stderr: "syntax error: Expected end of line (-2741)".into(),
+        };
+        assert!(!apple_events_denied(&syntax));
+    }
+
+    #[test]
+    fn a_mac_that_cannot_run_the_script_is_told_to_set_the_font_by_hand() {
+        let mut f = Fake::new(Os::MacOs, "/Users/ann");
+        for p in ["defaults", "osascript"] {
+            f.programs.insert(p.into(), format!("/usr/bin/{p}").into());
+            f.file(&format!("/usr/bin/{p}"), "");
+        }
+        f.answers
+            .insert(("defaults".into(), "read".into()), "Basic\n".into());
+        f.answers.insert(
+            ("defaults".into(), "export".into()),
+            terminal_plist("Menlo-Regular"),
+        );
+        // No answer for osascript: the fake fails it.
+        let posh = Posh::new(Arc::new(f));
+        let mut log = Vec::new();
+        assert!(!posh.set_terminal_fonts(&mut log), "{log:?}");
+        assert!(log.iter().any(|l| l.contains("Settings > Profiles > Text")));
+        assert!(!log.iter().any(|l| l.contains("Automation")), "{log:?}");
     }
 
     #[test]

@@ -21,6 +21,10 @@ Notable changes are recorded here. The format follows
 - On macOS with displays of different scaling, tray panels no longer open in the wrong place
   or close when clicked.
 - On macOS, each brightness slider now uses the same display number as the card on that monitor.
+- On macOS, the terminal prompt window can now set the Nerd Font in Terminal: the app
+  bundle declares that it sends Apple events, so macOS asks once to let IdleWalker control
+  Terminal instead of refusing silently. When the permission is refused, the window now says
+  where to allow it.
 
 ### Added
 

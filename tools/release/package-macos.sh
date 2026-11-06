@@ -32,6 +32,9 @@ iconutil -c icns "$iconset" -o "$app/Contents/Resources/IdleWalker.icns"
 
 # LSUIElement: a status bar app, so no Dock icon even while it starts.
 # NSHighResolutionCapable: without it, a bundled app is drawn blurry on Retina screens.
+# NSAppleEventsUsageDescription: the terminal prompt window sets Terminal's font through
+# AppleScript. Without this text macOS refuses every Apple event the app sends, with no
+# prompt (-1743); with it, macOS asks once to let IdleWalker control Terminal.
 cat > "$app/Contents/Info.plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -48,6 +51,7 @@ cat > "$app/Contents/Info.plist" <<EOF
     <key>CFBundleVersion</key><string>$version</string>
     <key>LSUIElement</key><true/>
     <key>NSHighResolutionCapable</key><true/>
+    <key>NSAppleEventsUsageDescription</key><string>IdleWalker sets the Nerd Font in Terminal's profile so the terminal prompt's icons show.</string>
 </dict>
 </plist>
 EOF
