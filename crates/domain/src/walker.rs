@@ -1486,7 +1486,9 @@ impl Walker {
                     return -12.0; // half turned away, ready to run
                 }
                 Temperament::Feisty => {
-                    return (8.0 * (self.time * 1.1).sin()); // perched, shifting from foot to foot
+                    // A bird turns its head in quick glances and holds each one, giving
+                    // one eye a good look, rather than swaying smoothly.
+                    return (((self.bird_glance() - 0.5) * 56.0) / 2.0).round() * 2.0;
                 }
                 _ => {
                     return ((if (((((self.cursor_x) as f64) - self.cx) * ((self.facing) as f64))
@@ -1671,6 +1673,9 @@ impl Walker {
             pose.body_dy = Walker::quantise(((0.3 * (1.0 + (self.time * 2.6).sin())) / 2.0));
             pose.lean = Walker::quantise((pose.lean + self.fidget_lean()));
         }
+        if self.bird {
+            self.bird_touch(rt::mref(&mut pose));
+        }
         pose.stretch_y *= ((1.0 - (0.22 * self.squash)) * self.personality.build_y);
         pose.stretch_x *= ((1.0 + (0.16 * self.squash)) * self.personality.build_x);
         if self.sweat > 0.0 {
@@ -1717,10 +1722,81 @@ impl Walker {
         }
         (*pose).walking = true;
         (*pose).walk_phase = self.walk_phase;
+        if self.bird {
+            self.hop_gait(&mut *pose);
+            return;
+        }
         (*pose).body_dy = ((self.eff_bob()
             * (1.0 - ((self.walk_phase * 4.0) * std::f64::consts::PI).cos()))
             / 2.0); // two bobs per stride
     }
+    // Small birds hop rather than stride: one bound per stride, stretched
+    // out in the air and squashed into the landing, with the shadow left
+    // on the ground beneath.
+    pub fn hop_gait(mut self, pose: &mut Pose) {
+        let mut p: f64 = (self.walk_phase - self.walk_phase.floor());
+        let mut height: f64 = (1.0 + self.eff_bob());
+        if p < 0.72 {
+            let mut s: f64 = (p / 0.72);
+            (*pose).body_dy = -(Walker::quantise((((4.0 * s) * (1.0 - s)) * height)));
+            (*pose).stretch_y = (1.0 + (0.05 * (1.0 - s)));
+            (*pose).stretch_x = (1.0 - (0.04 * (1.0 - s)));
+        } else {
+            let mut c: f64 = (((p - 0.72) / 0.28) * std::f64::consts::PI).sin();
+            (*pose).body_dy = Walker::quantise((0.25 * c));
+            (*pose).stretch_y = (1.0 - (0.10 * c));
+            (*pose).stretch_x = (1.0 + (0.08 * c));
+        }
+    }
+    // A fixed offset for each bird, so the flock never fidgets in step. Worked
+    // out from the name: this must not draw on the simulation's random numbers.
+    pub fn bird_offset(mut self) -> f64 {
+        let mut sum: u32 = self.personality.name.bytes().map(|b| b as u32).sum();
+        return (((sum as f64) * 0.37) % 1.0);
+    }
+    // 0..1, held for a second or two and then jumping to another value.
+    pub fn bird_glance(mut self) -> f64 {
+        let mut slot: f64 = ((self.time / 1.7) + (self.bird_offset() * 7.0)).floor();
+        let mut n: f64 = ((slot * 12.9898).sin() * 43758.5453);
+        return (n - n.floor());
+    }
+    // How birds differ from the rest when standing about and in the air.
+    pub fn bird_touch(mut self, pose: &mut Pose) {
+        if (self.mode == Mode::Rest) || (self.mode == Mode::Look) {
+            // A small body breathes quickly and shallowly.
+            (*pose).body_dy = Walker::quantise(((0.18 * (1.0 + (self.time * 6.5).sin())) / 2.0));
+            // No neck to cock: the whole body tips to go with each glance.
+            (*pose).lean = Walker::quantise(((*pose).lean + ((self.bird_glance() - 0.5) * 0.24)));
+            // Every so often, a rouse: every feather raised, a sharp side-to-side
+            // shake, then the plumage settles back into place.
+            let mut cycle: f64 = (self.time / Walker::ROUSE_EVERY) + self.bird_offset();
+            let mut t: f64 = ((cycle - cycle.floor()) * Walker::ROUSE_EVERY);
+            if t < 0.8 {
+                let mut up: f64 = (if (t < 0.15) {
+                    Walker::ease((t / 0.15))
+                } else {
+                    (if (t < 0.6) {
+                        1.0
+                    } else {
+                        (1.0 - Walker::ease(((t - 0.6) / 0.2)))
+                    })
+                });
+                (*pose).puff_up = (rt::round_even(((up * 0.3) * 16.0)) / 16.0);
+                if (t > 0.12) && (t < 0.6) {
+                    let mut shake: f64 = (t * 38.0).sin();
+                    (*pose).yaw = rt::round_even(((*pose).yaw + (14.0 * shake)));
+                    (*pose).lean = (rt::round_even(((0.22 * shake) * 8.0)) / 8.0);
+                }
+            }
+        } else if self.mode == Mode::Air {
+            // Drawn out along the way it is travelling, more the faster it goes.
+            let mut k: f64 = rt::min_f64(1.0, ((self.vy).abs() / (500.0 * self.size_factor)));
+            k = (rt::round_even((k * 4.0)) / 4.0);
+            (*pose).stretch_y *= (1.0 + (0.08 * k));
+            (*pose).stretch_x *= (1.0 - (0.06 * k));
+        }
+    }
+    pub const ROUSE_EVERY: f64 = 13.0;
     pub fn wave_arm(mut self, pose: &mut Pose) {
         if self.bird {
             // No wings to wave with: a happy bouncing bow instead.

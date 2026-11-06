@@ -42,6 +42,8 @@ Notable changes are recorded here. The format follows
 - macOS downloads are now one zip holding a universal `IdleWalker.app`, instead of a tar
   archive per CPU type.
 - On macOS, a click on the status bar icon now opens the brightness panel.
+- The Angry Birds look and move more like birds: soft feathered shading instead of a plastic
+  shine, bounding hops, quick held glances, faster breathing and an occasional fluff-and-shake.
 
 ### Removed
 

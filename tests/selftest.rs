@@ -216,6 +216,44 @@ fn brains_survive_on_disk() {
 }
 
 #[test]
+fn birds_hop_and_rouse() {
+    let t = Troupe::new(world(), Random::with_seed(1234));
+    t.ensure_cast();
+    t.set_minions_enabled(false);
+    t.set_birds_enabled(true);
+    t.set_bird_mask(Troupe::all_birds_mask());
+    let (mut hops, mut rouses) = (0, 0);
+    for i in 0..60 * 300 {
+        t.step(1.0 / 60.0, Point::new(960, 200), i > 10, false);
+        for w in t.walkers().items().filter(|w| w.is_visible()) {
+            assert_eq!(
+                w.personality.look.figure,
+                Figure::Bird,
+                "only birds are out"
+            );
+            let pose = w.current_pose();
+            assert!(
+                pose.body_dy.is_finite() && pose.stretch_y > 0.0 && pose.stretch_x > 0.0,
+                "{} in {:?}: dy={} sx={} sy={}",
+                w.personality.name,
+                w.mode,
+                pose.body_dy,
+                pose.stretch_x,
+                pose.stretch_y
+            );
+            if w.mode == Mode::Walk && pose.body_dy < 0.0 {
+                hops += 1;
+            }
+            if (w.mode == Mode::Rest || w.mode == Mode::Look) && pose.puff_up > 0.0 {
+                rouses += 1;
+            }
+        }
+    }
+    assert!(hops > 0, "a walking bird leaves the ground");
+    assert!(rouses > 0, "a resting bird fluffs itself up now and then");
+}
+
+#[test]
 fn seeded_random_matches_dotnet() {
     // Values from .NET's System.Random(1234).
     let r = Random::with_seed(1234);
