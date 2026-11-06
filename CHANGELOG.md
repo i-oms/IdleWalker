@@ -34,6 +34,13 @@ Notable changes are recorded here. The format follows
 - "Check for updates" in the settings menu, and a check in the background every few hours.
   When a new version is found, a dialog offers the download and explains that the running
   copy must exit first.
+- "Terminal prompt..." in the settings menu: a window that installs or updates Oh My Posh,
+  downloads its themes, puts the chosen theme into every shell found on the machine
+  (PowerShell 7, Windows PowerShell, bash, zsh, fish, Command Prompt through Clink, nu),
+  installs the Meslo Nerd Font, sets it as the terminal font in VS Code, Windows Terminal and
+  GNOME Terminal, and can take the prompt out of every shell again or uninstall Oh My Posh
+  altogether, through the package manager that installed it. On Windows it also lets
+  PowerShell load its profile when the execution policy forbids it.
 
 ### Changed
 

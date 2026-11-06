@@ -13,6 +13,7 @@ pub mod dialogs;
 pub mod gfx;
 pub mod menu_panel;
 pub mod overlays;
+pub mod posh_dialog;
 pub mod tray;
 pub mod update;
 
@@ -26,7 +27,7 @@ use dialogs::{
 };
 use gfx::Font;
 use idlewalker_application::{
-    Brains, BrightnessInfo, Desktop, Journal, Screen, Session, UpdateState, Updates,
+    Brains, BrightnessInfo, Desktop, Journal, Posh, Screen, Session, UpdateState, Updates,
 };
 use overlays::{AboutToast, CornerRipple, DisplayBadges};
 use std::collections::HashMap;
@@ -50,6 +51,8 @@ pub enum UserEvent {
         state: UpdateState,
         asked: bool,
     },
+    /// A terminal prompt task has finished.
+    Posh(Box<idlewalker_application::posh::Done>),
 }
 
 /// What the dialogs use besides the cast.
@@ -58,6 +61,7 @@ pub struct Services {
     pub desktop: Arc<dyn Desktop>,
     pub brains: Brains,
     pub updates: Updates,
+    pub posh: Posh,
 }
 
 /// Everything the presentation layer is handed by the composition root.
@@ -66,6 +70,8 @@ pub struct Wiring {
     pub session: Box<dyn FnOnce() -> Session>,
     pub sprites: SpriteFactory,
     pub updates: Updates,
+    /// The terminal prompt use case.
+    pub posh: Posh,
     /// For trouble before the session exists.
     pub journal: Arc<dyn Journal>,
     /// Runs first on each painter thread.
@@ -188,6 +194,7 @@ impl App {
             desktop: session.desktop().clone(),
             brains: session.brains().clone(),
             updates: wiring.updates,
+            posh: wiring.posh,
         };
         App {
             pump: Arc::new(PumpState::default()),
@@ -391,6 +398,7 @@ impl App {
                 "menu" => self.toggle_menu(el),
                 "brightness" => self.toggle_brightness(el),
                 "brains" => self.open_brains(el),
+                "posh" => self.open_posh(el),
                 "check-update" => self.check_for_update(el),
                 "about" => {
                     if self.about.is_none() {
@@ -473,6 +481,28 @@ impl App {
             None,
             size,
             Kind::Brains(BrainDialog::default()),
+        );
+    }
+
+    fn open_posh(&mut self, el: &ActiveEventLoop) {
+        if let Some(d) = self
+            .dialogs
+            .values()
+            .find(|d| matches!(d.kind, Kind::Posh(_)))
+        {
+            d.window.focus_window();
+            return;
+        }
+        let scale = self.scale_at_cursor();
+        let (w, h) = posh_dialog::SIZE;
+        let size = ((w * scale) as u32, (h * scale) as u32);
+        let dialog = posh_dialog::PoshDialog::new(self.services.posh.clone(), self.proxy.clone());
+        self.open_kind(
+            el,
+            "Terminal prompt",
+            None,
+            size,
+            Kind::Posh(Box::new(dialog)),
         );
     }
 
@@ -688,6 +718,16 @@ impl ApplicationHandler<UserEvent> for App {
                 }
             }
             UserEvent::UpdateChecked { state, asked } => self.on_update_checked(el, state, asked),
+            UserEvent::Posh(done) => {
+                // Closed while waiting: then the answer is no longer wanted.
+                for d in self.dialogs.values_mut() {
+                    if let Kind::Posh(p) = &mut d.kind {
+                        p.finish(*done);
+                        d.window.request_redraw();
+                        break;
+                    }
+                }
+            }
         }
     }
 

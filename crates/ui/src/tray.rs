@@ -222,6 +222,7 @@ pub fn build(c: &Choices, desktop: &dyn Desktop) -> Vec<Node> {
         },
         Node::Sep,
         item("brightness", "Brightness..."),
+        item("posh", "Terminal prompt..."),
         check("keep-awake", "Keep system awake", true, c.keep_awake),
         check("startup", desktop.startup_label(), true, c.startup),
         item("brains", "Brains..."),
@@ -384,6 +385,7 @@ mod backend {
             vec![
                 entry("Settings...", "menu"),
                 entry("Brightness...", "brightness"),
+                entry("Terminal prompt...", "posh"),
                 MenuItem::Separator,
                 entry("Exit", "exit"),
             ]

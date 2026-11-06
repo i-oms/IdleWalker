@@ -2,8 +2,10 @@
 //! compiled for this OS, so the ports stay the one place a capability is described.
 use crate::prelude::*;
 use crate::{backend, BrightnessInfo, MonitorWorld, Screen, SpriteWindow};
-use idlewalker_application::{Desktop, Displays, Journal, ReleaseFeed, Updates};
-use std::path::Path;
+use idlewalker_application::{
+    Desktop, Displays, Journal, Os, ReleaseFeed, RunResult, Updates, Workstation,
+};
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 // ---- The desktop -------------------------------------------------------------------------
@@ -141,21 +143,7 @@ pub struct CurlReleaseFeed;
 
 impl ReleaseFeed for CurlReleaseFeed {
     fn latest_release_address(&self) -> Option<String> {
-        let url = Updates::latest_release_link();
-        let args = [
-            "--fail",
-            "--silent",
-            "--head",
-            "--location",
-            "--max-time",
-            "20",
-            "--write-out",
-            "\\n%{url_effective}\\n",
-            url.as_str(),
-        ];
-        let out = crate::output_of("curl", &args)?;
-        let last = out.lines().rev().find(|l| !l.trim().is_empty());
-        Some(last.unwrap_or("").to_string())
+        crate::final_address(&Updates::latest_release_link())
     }
 
     fn download_file_name(&self, version: &str) -> String {
@@ -165,6 +153,102 @@ impl ReleaseFeed for CurlReleaseFeed {
             format!("idlewalker-{version}-macos.zip")
         } else {
             format!("idlewalker-{version}-linux-x64.zip")
+        }
+    }
+}
+
+// ---- The workstation ---------------------------------------------------------------------
+
+/// This machine's shells, programs and files.
+#[derive(Clone, Copy, Default)]
+pub struct NativeWorkstation;
+
+impl Workstation for NativeWorkstation {
+    fn os(&self) -> Os {
+        if cfg!(windows) {
+            Os::Windows
+        } else if cfg!(target_os = "macos") {
+            Os::MacOs
+        } else {
+            Os::Linux
+        }
+    }
+    fn home_dir(&self) -> Option<PathBuf> {
+        let name = if cfg!(windows) { "USERPROFILE" } else { "HOME" };
+        std::env::var_os(name)
+            .filter(|v| !v.is_empty())
+            .map(PathBuf::from)
+    }
+    fn temp_dir(&self) -> PathBuf {
+        std::env::temp_dir()
+    }
+    fn env(&self, name: &str) -> Option<String> {
+        std::env::var(name).ok()
+    }
+    fn find_program(&self, name: &str) -> Option<PathBuf> {
+        crate::find_program(name)
+    }
+    fn run(&self, program: &str, args: &[&str]) -> RunResult {
+        let mut c = std::process::Command::new(program);
+        c.args(args).stdin(std::process::Stdio::null());
+        backend::hide_console(&mut c);
+        match c.output() {
+            Ok(o) => RunResult {
+                success: o.status.success(),
+                stdout: String::from_utf8_lossy(&o.stdout).into_owned(),
+                stderr: String::from_utf8_lossy(&o.stderr).into_owned(),
+            },
+            Err(e) => RunResult {
+                success: false,
+                stdout: String::new(),
+                stderr: format!("{program}: {e}"),
+            },
+        }
+    }
+    fn read_text(&self, path: &Path) -> Option<String> {
+        String::from_utf8(std::fs::read(path).ok()?).ok()
+    }
+    fn write_text(&self, path: &Path, text: &str) -> Result<(), String> {
+        if let Some(dir) = path.parent() {
+            std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+        }
+        std::fs::write(path, text).map_err(|e| e.to_string())
+    }
+    fn exists(&self, path: &Path) -> bool {
+        path.exists()
+    }
+    fn make_dir(&self, path: &Path) -> Result<(), String> {
+        std::fs::create_dir_all(path).map_err(|e| e.to_string())
+    }
+    fn remove_file(&self, path: &Path) {
+        let _ = std::fs::remove_file(path);
+    }
+    fn remove_dir(&self, path: &Path) -> Result<(), String> {
+        std::fs::remove_dir_all(path).map_err(|e| e.to_string())
+    }
+    fn list_files(&self, dir: &Path, depth: u32) -> Vec<PathBuf> {
+        let mut out = Vec::new();
+        list_files_into(dir, depth, &mut out);
+        out
+    }
+    fn final_address(&self, url: &str) -> Option<String> {
+        crate::final_address(url)
+    }
+}
+
+fn list_files_into(dir: &Path, depth: u32, out: &mut Vec<PathBuf>) {
+    if depth == 0 {
+        return;
+    }
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for e in entries.flatten() {
+        let p = e.path();
+        if p.is_dir() {
+            list_files_into(&p, depth - 1, out);
+        } else {
+            out.push(p);
         }
     }
 }

@@ -15,7 +15,9 @@
 )]
 mod adapters;
 mod files;
-pub use adapters::{sprite_factory, CurlReleaseFeed, NativeDesktop, SystemClock, TempFileJournal};
+pub use adapters::{
+    sprite_factory, CurlReleaseFeed, NativeDesktop, NativeWorkstation, SystemClock, TempFileJournal,
+};
 pub use files::{FileBrainStore, FilePreferences};
 pub use idlewalker_application::{BrightnessInfo, Screen};
 
@@ -231,6 +233,59 @@ pub(crate) fn spawn(program: &str, args: &[&str]) -> bool {
         .stderr(std::process::Stdio::null());
     hide_console(&mut c);
     c.spawn().is_ok()
+}
+
+/// The address a redirecting link ends at, found with curl: following a redirect needs
+/// neither a rate-limited API nor a JSON parser.
+pub(crate) fn final_address(url: &str) -> Option<String> {
+    let args = [
+        "--fail",
+        "--silent",
+        "--head",
+        "--location",
+        "--max-time",
+        "20",
+        "--write-out",
+        "\\n%{url_effective}\\n",
+        url,
+    ];
+    let out = output_of("curl", &args)?;
+    let last = out.lines().rev().find(|l| !l.trim().is_empty());
+    Some(last.unwrap_or("").to_string())
+}
+
+/// A program on the PATH, as a shell would find it.
+pub(crate) fn find_program(name: &str) -> Option<std::path::PathBuf> {
+    let path = std::env::var_os("PATH")?;
+    let exts: Vec<String> = if cfg!(windows) {
+        let has_ext = std::path::Path::new(name).extension().is_some();
+        let listed = std::env::var("PATHEXT")
+            .unwrap_or_else(|_| ".EXE;.CMD;.BAT".into())
+            .split(';')
+            .map(|e| e.to_lowercase())
+            .collect::<Vec<_>>();
+        let mut exts = if has_ext {
+            vec![String::new()]
+        } else {
+            Vec::new()
+        };
+        exts.extend(listed);
+        exts
+    } else {
+        vec![String::new()]
+    };
+    for dir in std::env::split_paths(&path) {
+        if dir.as_os_str().is_empty() {
+            continue;
+        }
+        for ext in &exts {
+            let candidate = dir.join(format!("{name}{ext}"));
+            if candidate.is_file() {
+                return Some(candidate);
+            }
+        }
+    }
+    None
 }
 
 /// Runs a helper program and returns what it printed, if it succeeded.

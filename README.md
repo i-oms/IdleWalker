@@ -100,6 +100,12 @@ cargo build --release
   lock the screen, turn the monitor off, and more.
 - 🔆 **Brightness panel.** Adjust every monitor from the tray, including **external monitors over
   DDC/CI**, and use the mouse wheel to fine-tune.
+- 💻 **Terminal prompt.** A window that sets up [Oh My Posh](https://ohmyposh.dev) for you:
+  installs or updates it, fetches its themes, puts the one you pick into every shell you have
+  (PowerShell, Windows PowerShell, bash, zsh, fish, Command Prompt through Clink, nu), installs
+  the Nerd Font its icons need, and points VS Code, Windows Terminal and GNOME Terminal at that
+  font. One click takes the prompt out of every shell again, and another uninstalls Oh My Posh
+  altogether.
 - ☕ **Anti-idle nudge.** Keeps your machine awake when you want it to.
 - 🔄 **Update check.** It tells you when there's a new release, but never installs anything on
   its own.
