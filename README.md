@@ -103,9 +103,16 @@ cargo build --release
 - 💻 **Terminal prompt.** A window that sets up [Oh My Posh](https://ohmyposh.dev) for you:
   installs or updates it, fetches its themes, puts the one you pick into every shell you have
   (PowerShell, Windows PowerShell, bash, zsh, fish, Command Prompt through Clink, nu), installs
-  the Nerd Font its icons need, and points your terminals at that font: VS Code, Windows
-  Terminal and console windows, macOS Terminal and iTerm2, GNOME Terminal and Konsole. One click
-  takes the prompt out of every shell again, and another uninstalls Oh My Posh altogether.
+  the Nerd Font its icons need, and points your terminals at that font, every profile of
+  each: VS Code and its cousins, Zed, Windows Terminal, console windows, ConEmu and Cmder,
+  PuTTY, Git Bash, MSYS2, Cygwin and wsltty, macOS Terminal and iTerm2, GNOME Terminal and
+  Console, Ptyxis, Tilix, MATE Terminal, Konsole, Xfce Terminal, Terminator, Guake,
+  elementary Terminal, LXTerminal, QTerminal, Deepin Terminal, Sakura, foot, xterm and
+  urxvt, and the cross-platform kitty, Alacritty, Tabby, Hyper, Rio, Warp and Wave. It also
+  turns off the colour rules in VS Code and Windows Terminal that recolour the prompt.
+  Everything it changes is written down first, so one click puts the terminals back as they
+  were, another takes the prompt out of every shell, and "Uninstall" does both and removes
+  Oh My Posh and the font it installed.
 - ☕ **Anti-idle nudge.** Keeps your machine awake when you want it to.
 - 🔄 **Update check.** It tells you when there's a new release, but never installs anything on
   its own.
