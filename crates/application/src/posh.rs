@@ -6077,9 +6077,14 @@ mod tests {
             fake.text("/home/ann/.config/tabby/config.yaml"),
             "version: 1\nterminal:\n  font: 'Fira Code'\n  fontSize: 14\n"
         );
+    }
 
-        // On Windows the program is found by its installer's folder, and the settings
-        // folder follows TABBY_CONFIG_DIRECTORY when it is set.
+    /// On Windows the program is found by its installer's folder, and the settings
+    /// folder follows TABBY_CONFIG_DIRECTORY when it is set. Windows paths are joined
+    /// with backslashes only on a Windows host, so this runs there alone.
+    #[cfg(windows)]
+    #[test]
+    fn windows_tabby_is_found_by_its_installer_and_its_settings_variable() {
         let mut f = Fake::new(Os::Windows, r"C:\Users\ann");
         f.env.insert("LOCALAPPDATA".into(), r"C:\Users\ann\AppData\Local".into());
         f.env.insert("TABBY_CONFIG_DIRECTORY".into(), r"D:\tabby-data".into());
