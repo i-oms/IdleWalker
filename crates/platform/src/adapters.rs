@@ -182,6 +182,9 @@ impl Workstation for NativeWorkstation {
     fn temp_dir(&self) -> PathBuf {
         std::env::temp_dir()
     }
+    fn app_dir(&self) -> PathBuf {
+        crate::config_dir().unwrap_or_else(|| std::env::temp_dir().join("IdleWalker"))
+    }
     fn env(&self, name: &str) -> Option<String> {
         std::env::var(name).ok()
     }

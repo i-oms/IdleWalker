@@ -1,8 +1,9 @@
 //! The terminal prompt window: Oh My Posh's state at a glance, and a button for each step
 //! that would otherwise be a terminal command. Install or update it, fetch its themes,
-//! pick one, tick the shells it goes into, install the Nerd Font and point the terminals
-//! at it. Every step runs on a worker thread and reports back through the event loop;
-//! the window shows what it did in a log at the bottom.
+//! pick one, tick the shells it goes into, install the Nerd Font, point the terminals
+//! at it, and put them back the way they were. Every step runs on a worker thread and
+//! reports back through the event loop; the window shows what it did in a log at the
+//! bottom.
 use super::dialogs::Outcome;
 use super::gfx::{self, button, checkbox, Canvas, Font, Mouse};
 use super::{Services, UserEvent};
@@ -13,7 +14,7 @@ use std::collections::HashMap;
 use winit::event_loop::EventLoopProxy;
 
 /// The window's size in device-independent pixels.
-pub const SIZE: (f64, f64) = (860.0, 660.0);
+pub const SIZE: (f64, f64) = (860.0, 720.0);
 
 pub struct PoshDialog {
     posh: Posh,
@@ -419,29 +420,58 @@ impl PoshDialog {
                 );
                 y += line;
             }
-            for t in &st.terminals {
+            // A long list goes in two columns, so it stays above the buttons.
+            let row = px(18.0);
+            let cols: usize = if st.terminals.len() > 8 { 2 } else { 1 };
+            let col_w = right_w / cols as i32;
+            for (i, t) in st.terminals.iter().enumerate() {
                 let (what, colour) = if t.font_set {
                     ("uses the Nerd Font", gfx::GREEN)
                 } else {
                     ("not using the Nerd Font yet", gfx::WHITE)
                 };
+                let detail = if t.detail.is_empty() {
+                    String::new()
+                } else {
+                    format!(" ({})", t.detail)
+                };
+                let x = right + col_w * (i % cols) as i32;
                 c.text_fit(
                     f,
-                    right,
+                    x,
                     y,
-                    right_w,
-                    &format!("{}: {what}", t.name),
+                    col_w - px(8.0),
+                    &format!("{}: {what}{detail}", t.name),
                     text,
                     colour,
                 );
-                y += line;
+                if i % cols == cols - 1 || i + 1 == st.terminals.len() {
+                    y += row;
+                }
             }
             c.text_fit(f, right, y, right_w, st.terminal_note, small, gfx::DIM);
             y += line;
-            if !st.terminals.is_empty()
-                && btn(c, f, right, y, px(220.0), "Use the font in these terminals")
-            {
+            let settable = st
+                .terminals
+                .iter()
+                .any(|t| t.kind != idlewalker_application::posh::TerminalKind::BuiltIn);
+            if settable && btn(c, f, right, y, px(220.0), "Use the font in these terminals") {
                 next = Some((Task::SetTerminalFonts, "Setting the terminal fonts..."));
+            }
+            if st.undo_available
+                && btn(
+                    c,
+                    f,
+                    right + px(230.0),
+                    y,
+                    px(190.0),
+                    "Put the terminals back",
+                )
+            {
+                next = Some((
+                    Task::RestoreTerminalFonts,
+                    "Putting the terminal settings back...",
+                ));
             }
         }
 
@@ -460,7 +490,8 @@ impl PoshDialog {
         let confirming = self.confirm_uninstall;
         if confirming {
             // Asked here, in place of the apply row, as the brains dashboard does.
-            let question = "Take the prompt out of every shell and uninstall Oh My Posh?";
+            let question =
+                "Take the prompt out of every shell, put the terminals back and uninstall Oh My Posh?";
             c.text(f, left, buttons_y + px(6.0), question, text, gfx::ACCENT);
             let qx = left + f.width(question, text) + px(14.0);
             if btn(c, f, qx, buttons_y, px(120.0), "Yes, uninstall") {

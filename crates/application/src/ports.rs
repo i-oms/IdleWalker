@@ -141,6 +141,8 @@ pub trait Workstation: Send + Sync {
     fn os(&self) -> Os;
     fn home_dir(&self) -> Option<PathBuf>;
     fn temp_dir(&self) -> PathBuf;
+    /// This program's own folder, for what it must remember between runs.
+    fn app_dir(&self) -> PathBuf;
     fn env(&self, name: &str) -> Option<String>;
     /// A program on the PATH, as the shells see it.
     fn find_program(&self, name: &str) -> Option<PathBuf>;

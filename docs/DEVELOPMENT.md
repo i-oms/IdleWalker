@@ -41,7 +41,8 @@ The C# version leaned on Windows-only behaviour. Not all of it exists elsewhere:
 | Terminal prompt: install and update   | winget, else the install script | Homebrew, else the install script into `~/.local/bin` | The install script into `~/.local/bin` (needs `curl` and `unzip`) | Same as X11 |
 | Terminal prompt: uninstall            | winget, scoop or Chocolatey as installed, else its folder is deleted | Homebrew, else the binary is deleted | The binary is deleted; one under `/usr/local` needs `sudo`, which it says | Same as X11 |
 | Terminal prompt: shells               | PowerShell 7, Windows PowerShell, Git Bash, cmd (Clink), nu | zsh, bash, fish, PowerShell, nu | bash, zsh, fish, PowerShell, nu | Same as X11 |
-| Terminal prompt: terminal font        | VS Code family, Windows Terminal, the console host (`HKCU\Console`) | VS Code family, Terminal (AppleScript, may ask for Automation permission), iTerm2 (`defaults export`/`import`, iTerm2 must be closed) | VS Code family, GNOME Terminal (`gsettings`), Konsole (its profile file) | Same as X11 |
+| Terminal prompt: terminal font        | VS Code family, Windows Terminal (every profile), the console host (`HKCU\Console` and its subkeys), ConEmu and Cmder (`ConEmu.xml` or `HKCU\Software\ConEmu`, every configuration), PuTTY (every session under `HKCU\Software\SimonTatham\PuTTY\Sessions`), mintty for Git Bash, MSYS2 and Cygwin (each home's `.minttyrc`) and wsltty, Alacritty, Tabby, Hyper, Rio, Warp, Wave, Zed | VS Code family, Terminal (AppleScript, every profile, may ask for Automation permission), iTerm2 (`defaults export`/`import`, every profile, iTerm2 must be closed), kitty, Alacritty, Tabby, Hyper, Rio, Warp, Wave, Zed | VS Code family, GNOME Terminal, Tilix and MATE Terminal (`gsettings`, every profile), Ptyxis, GNOME Console, Guake and elementary Terminal (`gsettings`, one font each), Konsole (its profile files), Xfce Terminal, Terminator (every profile), LXTerminal, QTerminal, Deepin Terminal, Sakura, foot, PuTTY (`~/.putty/sessions`), xterm and urxvt (`~/.Xresources`, loaded with `xrdb`), kitty, Alacritty, Tabby, Hyper, Rio, Warp, Wave, Zed | Same as X11 |
+| Terminal prompt: put back             | Every change above is recorded in `terminal-undo.txt` with the old value and restored from it; so are the font files the window installed | Same | Same | Same |
 
 Differences on every OS, compared with the C# version:
 
@@ -104,7 +105,12 @@ line goes in it) and the `Workstation` port only runs programs and reads and wri
 whole plan for every OS is tested in memory on any OS. The port reports the OS; the use case never
 asks the compiler. A profile gets one block between `# >>> IdleWalker: Oh My Posh >>>` and
 `# <<< IdleWalker: Oh My Posh <<<` (Lua comments for Clink), which is what "Remove" takes out
-again. `IDLEWALKER_TEST_MENU=posh` opens the window at start-up.
+again. Each terminal has an "apply" that records every setting's old value in
+`terminal-undo.txt` (one line per setting: target, key, old value) before changing it, and a
+"restore" that reads those lines back; a new terminal needs both. A terminal whose font is one
+or two keys in a settings file of a common shape (INI, `Key=Value`, TOML or JSON) needs only a
+`Recipe` entry and a line that finds its file; one whose font is a gsettings key needs only a
+`GsRecipe`. `IDLEWALKER_TEST_MENU=posh` opens the window at start-up.
 
 **Translated code.** `crates/domain/` (except `lib.rs`), `crates/rendering/` (except `lib.rs`,
 `render_thread.rs` and `sprite_sink.rs`) and `settings.rs` were
