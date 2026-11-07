@@ -35,6 +35,15 @@ Notable changes are recorded here. The format follows
   - Console windows: every program or window title with its own font under `HKCU\Console`
     is set, not only the default; those kept Consolas before.
   - macOS Terminal, GNOME Terminal and Konsole: every profile, not only the default.
+  - macOS Terminal and iTerm2 now get the font's real PostScript name, `MesloLGMNFM-Regular`:
+    Nerd Fonts have shortened it since version 3, and Terminal answers "done" to a name it
+    does not know while keeping its old font. The name macOS itself resolves the font to
+    is used first, the profiles are read back afterwards, the font's other names are tried
+    in turn, and the window says which profiles still have another font if none took,
+    instead of reporting the font as set. The window could not read Terminal's answer
+    before, since `tab` inside a `tell application "Terminal"` is its window-tab class.
+    The status line asks the running Terminal too, instead of its settings file, which
+    Terminal writes only when it quits.
   - iTerm2: the font for non-ASCII text as well, where a profile has one.
   - Bash: a `.bash_profile` that hid `.bashrc` is made to load it on Windows (Git Bash) and
     Linux too, not only on macOS.
@@ -72,7 +81,9 @@ Notable changes are recorded here. The format follows
   terminal. Every terminal setting it changes is recorded with the
   value that was there, in `terminal-undo.txt` in IdleWalker's folder; "Put the terminals
   back" restores them all, and "Uninstall" restores them and removes the font files the
-  window installed, leaving a font that was already there alone.
+  window installed, leaving a font that was already there alone. After each font task it
+  writes `terminal-debug.txt` beside it: every program it ran and what that printed, for
+  working out why a terminal did not take the font.
 
 ### Changed
 

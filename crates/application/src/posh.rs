@@ -12,7 +12,7 @@
 use crate::jsonc;
 use crate::ports::{Os, RunResult, Workstation};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 pub const RELEASES: &str = "https://github.com/JanDeDobbeleer/oh-my-posh/releases";
 pub const THEME_GALLERY: &str = "https://ohmyposh.dev/docs/themes";
@@ -23,8 +23,23 @@ pub const FONT_NAME: &str = "MesloLGM Nerd Font";
 /// The same font with every icon squeezed to one cell: what the terminals that cannot
 /// cope with wide glyphs (Terminal.app, iTerm2, the Windows console) are given.
 pub const FONT_MONO: &str = "MesloLGM Nerd Font Mono";
-/// How macOS names that font internally.
-const FONT_MONO_POSTSCRIPT: &str = "MesloLGMNerdFontMono-Regular";
+/// How macOS names that font internally: its PostScript name. Nerd Fonts shorten
+/// "Nerd Font Mono" to "NFM" there (and "Nerd Font" to "NF") since version 3.
+const FONT_MONO_POSTSCRIPT: &str = "MesloLGMNFM-Regular";
+/// The names Terminal is offered for that font, in turn, until it reports one back:
+/// the PostScript name, the one Nerd Fonts used before version 3, the family name and
+/// the full name, then the same for the font with the wide icons. The names macOS
+/// itself resolves on the machine come before these.
+const APPLE_TERMINAL_FONT_NAMES: [&str; 8] = [
+    FONT_MONO_POSTSCRIPT,
+    "MesloLGMNerdFontMono-Regular",
+    FONT_MONO,
+    "MesloLGM Nerd Font Mono Regular",
+    "MesloLGMNF-Regular",
+    "MesloLGMNerdFont-Regular",
+    FONT_NAME,
+    "MesloLGM Nerd Font Regular",
+];
 const FONT_PACKAGE: &str = "meslo";
 const WINGET_ID: &str = "JanDeDobbeleer.OhMyPosh";
 const CLINK_WINGET_ID: &str = "chrisant996.Clink";
@@ -39,6 +54,11 @@ const NU_MIN_VERSION: (u32, u32, u32) = (0, 104, 0);
 const NU_AUTOLOAD_FILE: &str = "oh-my-posh.nu";
 /// Where the terminal settings this program changed are kept, with their old values.
 const UNDO_FILE: &str = "terminal-undo.txt";
+/// Where the last task's every program run, with what it printed, is written for
+/// anyone trying to see why a terminal did not take the font.
+const DEBUG_FILE: &str = "terminal-debug.txt";
+/// How much of what a program printed the debug file keeps, per stream.
+const DEBUG_KEEP: usize = 6000;
 /// VS Code's terminal font, and the contrast rule that recolours a prompt's segments
 /// unless it is turned off (1).
 const VSCODE_FONT: &str = "terminal.integrated.fontFamily";
@@ -265,10 +285,18 @@ fn theme_name(file: &Path) -> Option<String> {
 }
 
 /// Whether a font name is a Nerd Font's: "MesloLGM Nerd Font", "MesloLGM NF",
-/// "MesloLGMNerdFontMono-Regular" and the like.
+/// "MesloLGMNerdFontMono-Regular", "MesloLGMNFM-Regular" and the like.
 fn is_nerd_font(name: &str) -> bool {
     let s = name.to_lowercase().replace(' ', "");
-    s.contains("nerdfont") || s.ends_with("nf") || s.ends_with("nfm") || s.ends_with("nfp")
+    if s.contains("nerdfont") {
+        return true;
+    }
+    // The short family name, with or without a style after a hyphen or a space.
+    let family = s.split(['-', ':']).next().unwrap_or("");
+    let family = family.trim_end_matches("regular").trim_end_matches("bold");
+    ["nf", "nfm", "nfp"]
+        .iter()
+        .any(|tail| family.ends_with(tail) && family.len() > tail.len())
 }
 
 /// Where the managed block sits: from the start of its first line to after its last.
@@ -400,6 +428,19 @@ pub fn init_line(shell: Shell, os: Os, binary: &Path, theme: Option<&Path>) -> S
 }
 
 /// The last few lines a program printed, for the log.
+/// What a program printed, cut to what the debug file keeps.
+fn debug_clip(text: &str) -> String {
+    let text = text.trim_end();
+    if text.len() <= DEBUG_KEEP {
+        return text.to_string();
+    }
+    let mut end = DEBUG_KEEP;
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!("{}\n[... {} more bytes]", &text[..end], text.len() - end)
+}
+
 fn tail(r: &RunResult) -> Vec<String> {
     let text = if r.stderr.trim().is_empty() {
         &r.stdout
@@ -506,11 +547,38 @@ impl Changes {
 #[derive(Clone)]
 pub struct Posh {
     ws: Arc<dyn Workstation>,
+    /// Every program run since the last task began, for the debug file.
+    trace: Arc<Mutex<Vec<String>>>,
 }
 
 impl Posh {
     pub fn new(ws: Arc<dyn Workstation>) -> Self {
-        Posh { ws }
+        Posh {
+            ws,
+            trace: Arc::default(),
+        }
+    }
+
+    /// A line for the debug file.
+    fn note(&self, line: impl Into<String>) {
+        self.trace.lock().unwrap().push(line.into());
+    }
+
+    fn debug_path(&self) -> PathBuf {
+        self.ws.app_dir().join(DEBUG_FILE)
+    }
+
+    /// Writes the trace of a task to the debug file and empties it.
+    fn debug_save(&self, task: &str) {
+        let lines = std::mem::take(&mut *self.trace.lock().unwrap());
+        let mut text = format!(
+            "IdleWalker terminal prompt: {task}\nOS: {:?}\nHome: {}\n\n",
+            self.os(),
+            self.home().display()
+        );
+        text.push_str(&lines.join("\n"));
+        text.push('\n');
+        let _ = self.ws.write_text(&self.debug_path(), &text);
     }
 
     fn os(&self) -> Os {
@@ -573,6 +641,22 @@ impl Posh {
             .or_else(|| self.ws.find_program(name))
     }
 
+    /// Whether a macOS program of that exact name is running.
+    fn mac_running(&self, name: &str) -> bool {
+        self.ws
+            .find_program("pgrep")
+            .map(|p| self.run(&p, &["-x", name]).success)
+            .unwrap_or(false)
+    }
+
+    /// Whether the window has set Terminal's font before: the record holds its
+    /// profiles, so the Automation question has been answered already.
+    fn apple_terminal_applied(&self) -> bool {
+        self.undo_load()
+            .iter()
+            .any(|u| u.target.starts_with("terminal.app:"))
+    }
+
     /// A macOS application, in either Applications folder.
     fn mac_app(&self, name: &str) -> bool {
         self.ws.exists(&PathBuf::from("/Applications").join(name))
@@ -583,7 +667,29 @@ impl Posh {
 
     fn run(&self, program: &Path, args: &[&str]) -> RunResult {
         let p = program.display().to_string();
-        self.ws.run(&p, args)
+        let r = self.ws.run(&p, args);
+        let shown: Vec<String> = args
+            .iter()
+            .map(|a| {
+                if a.contains(' ') || a.contains('\n') {
+                    format!("'{}'", a.replace('\n', "\n    "))
+                } else {
+                    a.to_string()
+                }
+            })
+            .collect();
+        let mut line = format!(
+            "$ {p} {}\n  exit: {}",
+            shown.join(" "),
+            if r.success { "ok" } else { "failed" }
+        );
+        for (name, text) in [("stdout", &r.stdout), ("stderr", &r.stderr)] {
+            if !text.trim().is_empty() {
+                line.push_str(&format!("\n  {name}:\n    {}", debug_clip(text).replace('\n', "\n    ")));
+            }
+        }
+        self.note(line);
+        r
     }
 
     /// The last line a program printed, if it succeeded.
@@ -1214,13 +1320,27 @@ impl Posh {
         if names.is_empty() {
             names.push(default_profile.clone());
         }
+        let mut font_set = names
+            .iter()
+            .all(|n| apple_terminal_font_is_nerd(&plist, n));
+        // Terminal keeps a change made through AppleScript in its own copy of the
+        // settings while it runs, and writes the file later. So once the font has
+        // been applied, and Terminal is running, Terminal itself is asked. Not
+        // before: asking would start Terminal and raise the Automation question.
+        if !font_set && self.apple_terminal_applied() && self.mac_running("Terminal") {
+            if let Some(osascript) = self.ws.find_program("osascript") {
+                let live = self.apple_terminal_fonts(&osascript);
+                if !live.is_empty() {
+                    names = live.iter().map(|(n, _)| n.clone()).collect();
+                    font_set = live.iter().all(|(_, f)| is_nerd_font(f));
+                }
+            }
+        }
         out.push(TerminalStatus {
             name: "Terminal".into(),
             kind: TerminalKind::AppleTerminal,
             target: default_profile,
-            font_set: names
-                .iter()
-                .all(|n| apple_terminal_font_has(&plist, n, "NerdFont")),
+            font_set,
             detail: profiles_text(names.len()),
         });
         let iterm = home
@@ -1928,6 +2048,7 @@ impl Posh {
     pub fn perform(&self, task: &Task) -> Done {
         let mut log = Vec::new();
         let mut latest = None;
+        self.trace.lock().unwrap().clear();
         let ok = match task {
             Task::Refresh => true,
             Task::CheckLatest => {
@@ -1956,8 +2077,24 @@ impl Posh {
             Task::RestoreTerminalFonts => self.restore_terminal_fonts(false, &mut log),
             Task::InstallClink => self.install_clink(&mut log),
         };
+        if matches!(
+            task,
+            Task::SetTerminalFonts | Task::RestoreTerminalFonts | Task::InstallFont
+        ) {
+            self.note("---- the state afterwards ----");
+        }
         let mut status = self.status();
         status.latest = latest;
+        if matches!(
+            task,
+            Task::SetTerminalFonts | Task::RestoreTerminalFonts | Task::InstallFont
+        ) {
+            self.debug_save(&format!("{task:?}"));
+            log.push(format!(
+                "Every program run and what it printed is in {}.",
+                self.debug_path().display()
+            ));
+        }
         Done { ok, log, status }
     }
 
@@ -2961,16 +3098,46 @@ impl Posh {
         self.run(&xrdb, &["-merge", &path.display().to_string()]).success
     }
 
+    /// The PostScript names macOS itself resolves the font to, asked through a fresh
+    /// process by each of the font's names; the Mono font's first. For the debug file,
+    /// the Meslo font files on the machine too. The window is told when macOS resolves
+    /// none of the names, since Terminal cannot then either.
+    fn apple_font_probe(&self, osascript: &Path, log: &mut Vec<String>) -> Vec<String> {
+        for dir in [self.user_font_dir(), PathBuf::from("/Library/Fonts")] {
+            let files: Vec<String> = self
+                .ws
+                .list_files(&dir, 4)
+                .iter()
+                .filter(|f| f.display().to_string().to_lowercase().contains("meslo"))
+                .map(|f| f.display().to_string())
+                .collect();
+            self.note(format!(
+                "Meslo files under {}: {}",
+                dir.display(),
+                if files.is_empty() { "none".to_string() } else { files.join(", ") }
+            ));
+        }
+        let answer = self
+            .ask_all(osascript, &["-l", "JavaScript", "-e", APPLE_FONT_PROBE])
+            .unwrap_or_default();
+        let mut resolved: Vec<String> = Vec::new();
+        for line in answer.lines() {
+            if let Some(rest) = line.split("opens as ").nth(1) {
+                let name = rest.trim_end_matches(", found").trim();
+                if !name.is_empty() && !resolved.iter().any(|r| r == name) {
+                    resolved.push(name.to_string());
+                }
+            }
+        }
+        if answer.contains("missing") && resolved.is_empty() {
+            log.push("Terminal: macOS does not see the font by any of its names (details in the debug file). Quit Terminal, sign out and in, and try again.".into());
+        }
+        resolved
+    }
+
     /// Terminal's profiles ("settings sets"), each with its font, through AppleScript.
     fn apple_terminal_fonts(&self, osascript: &Path) -> Vec<(String, String)> {
-        let script = "tell application \"Terminal\"\n\
-                      set out to \"\"\n\
-                      repeat with s in settings sets\n\
-                      set out to out & (name of s) & tab & (font name of s) & linefeed\n\
-                      end repeat\n\
-                      return out\n\
-                      end tell";
-        self.ask_all(osascript, &["-e", script])
+        self.ask_all(osascript, &["-e", APPLE_TERMINAL_LIST])
             .unwrap_or_default()
             .lines()
             .filter_map(|l| {
@@ -2980,14 +3147,15 @@ impl Posh {
             .collect()
     }
 
-    /// One AppleScript that sets every named profile's font, and the default and
-    /// start-up ones.
-    fn apple_terminal_script(fonts: &[(String, String)], defaults_too: bool) -> String {
+    /// One AppleScript that sets every named profile's font, and, given a font, the
+    /// default and start-up ones too.
+    fn apple_terminal_script(fonts: &[(String, String)], defaults: Option<&str>) -> String {
         let mut lines = vec!["tell application \"Terminal\"".to_string()];
-        if defaults_too {
+        if let Some(font) = defaults {
             for which in ["default settings", "startup settings"] {
                 lines.push(format!(
-                    "set font name of {which} to \"{FONT_MONO_POSTSCRIPT}\""
+                    "set font name of {which} to \"{}\"",
+                    applescript_text(font)
                 ));
             }
         }
@@ -3007,6 +3175,12 @@ impl Posh {
             return false;
         };
         log.push("Terminal: setting its font (macOS may ask to let IdleWalker control Terminal)...".into());
+        let mut names: Vec<String> = self.apple_font_probe(&osascript, log);
+        for n in APPLE_TERMINAL_FONT_NAMES {
+            if !names.iter().any(|m| m == n) {
+                names.push(n.to_string());
+            }
+        }
         let mut current = self.apple_terminal_fonts(&osascript);
         if current.is_empty() {
             // Not told: the names from its settings file, their fonts unknown.
@@ -3028,24 +3202,43 @@ impl Posh {
                 (!font.is_empty()).then(|| font.clone()),
             );
         }
-        let wanted: Vec<(String, String)> = current
-            .iter()
-            .map(|(n, _)| (n.clone(), FONT_MONO_POSTSCRIPT.to_string()))
-            .collect();
-        let script = Self::apple_terminal_script(&wanted, true);
-        let r = self.run(&osascript, &["-e", &script]);
-        if r.success {
-            log.push(format!(
-                "Terminal: font set to {FONT_MONO} in {}. Open a new Terminal window.",
-                profiles_text(wanted.len())
-            ));
-            return true;
+        // Terminal answers "done" to a font name it does not know, and keeps the
+        // old font. So each name is tried and the profiles read back, until one is
+        // reported back as the Nerd Font.
+        let mut left_over = Vec::new();
+        for font in &names {
+            let wanted: Vec<(String, String)> = current
+                .iter()
+                .map(|(n, _)| (n.clone(), font.clone()))
+                .collect();
+            let script = Self::apple_terminal_script(&wanted, Some(font));
+            let r = self.run(&osascript, &["-e", &script]);
+            if !r.success {
+                log.extend(tail(&r));
+                if apple_events_denied(&r) {
+                    log.push("Terminal: macOS did not let IdleWalker control Terminal. Allow it under System Settings > Privacy & Security > Automation, then try again.".into());
+                }
+                log.push(format!("Terminal: could not set the font; pick {FONT_MONO} under Settings > Profiles > Text."));
+                return false;
+            }
+            let after = self.apple_terminal_fonts(&osascript);
+            left_over = after
+                .iter()
+                .filter(|(_, f)| !is_nerd_font(f))
+                .map(|(n, f)| format!("{n} ({f})"))
+                .collect();
+            if left_over.is_empty() {
+                log.push(format!(
+                    "Terminal: font set to {FONT_MONO} in {}. Open a new Terminal window; Terminal saves the change to its settings file when it quits.",
+                    profiles_text(wanted.len())
+                ));
+                return true;
+            }
         }
-        log.extend(tail(&r));
-        if apple_events_denied(&r) {
-            log.push("Terminal: macOS did not let IdleWalker control Terminal. Allow it under System Settings > Privacy & Security > Automation, then try again.".into());
-        }
-        log.push(format!("Terminal: could not set the font; pick {FONT_MONO} under Settings > Profiles > Text."));
+        log.push(format!(
+            "Terminal: did not take the font; it still reports {}. Terminal may not see the font until it is quit and opened again, or pick {FONT_MONO} under Settings > Profiles > Text.",
+            left_over.join(", ")
+        ));
         false
     }
 
@@ -3504,7 +3697,7 @@ impl Posh {
         if fonts.is_empty() {
             return true;
         }
-        let script = Self::apple_terminal_script(&fonts, false);
+        let script = Self::apple_terminal_script(&fonts, None);
         let r = self.run(&osascript, &["-e", &script]);
         if r.success {
             log.push(format!(
@@ -5212,6 +5405,34 @@ fn iterm_with_fonts(plist: &str, pick: impl Fn(&ItermFont) -> Option<String>) ->
     (out, n)
 }
 
+/// The AppleScript that lists Terminal's profiles with their fonts, one per line,
+/// name and font parted by a tab. The tab is made outside the `tell` block: inside
+/// it, `tab` is Terminal's own window-tab class and comes out as the word "tab".
+const APPLE_TERMINAL_LIST: &str = "set sep to character id 9\n\
+                                   set nl to character id 10\n\
+                                   set out to \"\"\n\
+                                   tell application \"Terminal\"\n\
+                                   repeat with s in settings sets\n\
+                                   set out to out & (name of s) & sep & (font name of s) & nl\n\
+                                   end repeat\n\
+                                   end tell\n\
+                                   return out";
+
+/// JavaScript for osascript: asks AppKit, in a fresh process, to open the font by each
+/// of its names, and prints one line per name ending in "found" or "missing".
+const APPLE_FONT_PROBE: &str = "ObjC.import('AppKit');\n\
+    var names = ['MesloLGMNFM-Regular', 'MesloLGM Nerd Font Mono', 'MesloLGMNerdFontMono-Regular', 'MesloLGMNF-Regular', 'MesloLGM Nerd Font', 'MesloLGMNerdFont-Regular'];\n\
+    var out = [];\n\
+    for (var i = 0; i < names.length; i++) {\n\
+    var f = $.NSFont.fontWithNameSize(names[i], 12);\n\
+    out.push(names[i] + ': ' + (f.isNil() ? 'missing' : 'opens as ' + ObjC.unwrap(f.fontName) + ', found'));\n\
+    }\n\
+    var all = ObjC.unwrap($.NSFontManager.sharedFontManager.availableFonts);\n\
+    var meslo = [];\n\
+    for (var j = 0; j < all.length; j++) { var n = ObjC.unwrap(all[j]); if (n.indexOf('Meslo') >= 0) meslo.push(n); }\n\
+    out.push('available fonts with Meslo in the name: ' + (meslo.length ? meslo.join(', ') : 'none'));\n\
+    out.join('\\n');";
+
 /// Whether osascript was refused by macOS's Automation permission rather than by the
 /// script: "Not authorized to send Apple events to Terminal. (-1743)".
 fn apple_events_denied(r: &RunResult) -> bool {
@@ -5219,9 +5440,10 @@ fn apple_events_denied(r: &RunResult) -> bool {
     text.contains("-1743") || text.contains("Not authorized to send Apple events")
 }
 
-/// Whether Terminal's profile has a font whose name holds `needle`: the font is an
-/// archived object in the settings, but its name sits in it as plain text.
-fn apple_terminal_font_has(plist: &str, profile: &str, needle: &str) -> bool {
+/// Whether Terminal's profile has a Nerd Font: the font is an archived object in the
+/// settings, but its name sits in it as plain text, so every run of plain text in it
+/// is looked at.
+fn apple_terminal_font_is_nerd(plist: &str, profile: &str) -> bool {
     let Some(w) = plist.find("<key>Window Settings</key>") else {
         return false;
     };
@@ -5240,7 +5462,9 @@ fn apple_terminal_font_has(plist: &str, profile: &str, needle: &str) -> bool {
         return false;
     }
     let bytes = base64_decode(&after[s + 6..e]);
-    String::from_utf8_lossy(&bytes).contains(needle)
+    String::from_utf8_lossy(&bytes)
+        .split(|c: char| !c.is_ascii_graphic())
+        .any(|run| run.len() >= 4 && is_nerd_font(run))
 }
 
 fn base64_decode(text: &str) -> Vec<u8> {
@@ -5284,6 +5508,9 @@ mod tests {
         drops: Vec<(String, PathBuf)>,
         runs: Mutex<Vec<String>>,
         env: HashMap<String, String>,
+        /// Answers given in turn to one whole argument line, the last one for good:
+        /// a program whose answer changes as the machine is changed.
+        turns: Mutex<HashMap<(String, String), Vec<String>>>,
     }
 
     impl Fake {
@@ -5292,6 +5519,7 @@ mod tests {
                 os,
                 home: PathBuf::from(home),
                 files: Mutex::default(),
+                turns: Mutex::default(),
                 programs: HashMap::new(),
                 answers: HashMap::new(),
                 drops: Vec::new(),
@@ -5323,6 +5551,12 @@ mod tests {
         fn answer(&mut self, program: &str, arg: &str, out: &str) {
             self.answers
                 .insert((program.into(), arg.into()), out.into());
+        }
+        fn answer_in_turn(&self, program: &str, args: &str, outs: &[&str]) {
+            self.turns.lock().unwrap().insert(
+                (program.into(), args.into()),
+                outs.iter().map(|s| s.to_string()).collect(),
+            );
         }
     }
 
@@ -5364,6 +5598,14 @@ mod tests {
                 }
             }
             let whole = (name.clone(), args.join(" "));
+            if let Some(outs) = self.turns.lock().unwrap().get_mut(&whole) {
+                let out = if outs.len() > 1 { outs.remove(0) } else { outs[0].clone() };
+                return RunResult {
+                    success: true,
+                    stdout: out,
+                    stderr: String::new(),
+                };
+            }
             let first = (name, args.first().map_or("", |a| a).to_string());
             match self.answers.get(&whole).or_else(|| self.answers.get(&first)) {
                 Some(out) => RunResult {
@@ -5522,10 +5764,24 @@ mod tests {
             "MesloLGM NF",
             "FiraCode NFM",
             "MesloLGMNerdFontMono-Regular 11",
+            // The PostScript names Nerd Fonts give since version 3.
+            "MesloLGMNFM-Regular",
+            "MesloLGMNF-Bold",
+            "MesloLGMNFP-Italic",
+            "MesloLGMNFM-Regular 13",
+            "FiraCodeNFM-Reg",
         ] {
             assert!(is_nerd_font(f), "{f}");
         }
-        for f in ["Consolas", "Cascadia Mono", "Fun Font", "Menlo-Regular 13"] {
+        for f in [
+            "Consolas",
+            "Cascadia Mono",
+            "Fun Font",
+            "Menlo-Regular 13",
+            "SFMonoTerminal-Regular",
+            "AndaleMono",
+            "NF",
+        ] {
             assert!(!is_nerd_font(f), "{f}");
         }
     }
@@ -6275,12 +6531,9 @@ mod tests {
         assert_eq!(n, 3);
         assert_eq!(
             iterm_fonts(&out),
-            [
-                "MesloLGMNerdFontMono-Regular 13",
-                "MesloLGMNerdFontMono-Regular 11"
-            ]
+            ["MesloLGMNFM-Regular 13", "MesloLGMNFM-Regular 11"]
         );
-        assert!(out.contains("<key>Non Ascii Font</key>\n<string>MesloLGMNerdFontMono-Regular 12</string>"));
+        assert!(out.contains("<key>Non Ascii Font</key>\n<string>MesloLGMNFM-Regular 12</string>"));
         assert!(out.contains("<key>Name</key>\n<string>Default</string>"));
         let (back, m) = iterm_with_fonts(&out, |f| {
             entries
@@ -6328,22 +6581,16 @@ mod tests {
             plist_profile_names(&terminal_plist("Menlo-Regular")),
             ["Basic", "Pro"]
         );
-        assert!(!apple_terminal_font_has(
-            &terminal_plist("Menlo-Regular"),
-            "Basic",
-            "NerdFont"
-        ));
-        assert!(apple_terminal_font_has(
-            &terminal_plist(FONT_MONO_POSTSCRIPT),
-            "Basic",
-            "NerdFont"
-        ));
-        assert!(!apple_terminal_font_has(
-            &terminal_plist(FONT_MONO_POSTSCRIPT),
-            "Pro",
-            "NerdFont"
-        ));
+        assert!(!apple_terminal_font_is_nerd(&terminal_plist("Menlo-Regular"), "Basic"));
+        assert!(!apple_terminal_font_is_nerd(&terminal_plist("SFMonoTerminal-Regular"), "Basic"));
+        assert!(apple_terminal_font_is_nerd(&terminal_plist(FONT_MONO_POSTSCRIPT), "Basic"));
+        assert!(apple_terminal_font_is_nerd(&terminal_plist("MesloLGMNerdFontMono-Regular"), "Basic"));
+        assert!(!apple_terminal_font_is_nerd(&terminal_plist(FONT_MONO_POSTSCRIPT), "Pro"));
         assert_eq!(base64_decode("aGVsbG8="), b"hello");
+        // The real archive from a Mac, holding "SFMonoTerminal-Regular".
+        let real = "<dict><key>Window Settings</key><dict><key>Basic</key><dict><key>Font</key><data>\nYnBsaXN0MDDUAQIDBAUGBwpYJHZlcnNpb25ZJGFyY2hpdmVyVCR0b3BYJG9iamVjdHMSAAGGoF8QD05TS2V5ZWRBcmNoaXZlctEICVRyb290gAGkCwwVFlUkbnVsbNQNDg8QERITFFZOU1NpemVYTlNmRmxhZ3NWTlNOYW1lViRjbGFzcyNAJgAAAAAAABAQgAKAA18QFlNGTW9ub1Rlcm1pbmFsLVJlZ3VsYXLSFxgZGlokY2xhc3NuYW1lWCRjbGFzc2VzVk5TRm9udKIZG1hOU09iamVjdAgRGiQpMjdJTFFTWF5nbnd+hY6QkpStsr3GzdAAAAAAAAABAQAAAAAAAAAcAAAAAAAAAAAAAAAAAAAA2Q==\n</data></dict></dict></dict>";
+        assert!(!apple_terminal_font_is_nerd(real, "Basic"));
+        assert!(String::from_utf8_lossy(&base64_decode(real.split("<data>").nth(1).unwrap().split("</data>").next().unwrap())).contains("SFMonoTerminal-Regular"));
     }
 
     #[test]
@@ -6378,11 +6625,11 @@ mod tests {
         let runs = fake.runs();
         let script = runs
             .iter()
-            .filter(|r| r.starts_with("/usr/bin/osascript"))
+            .filter(|r| r.starts_with("/usr/bin/osascript") && r.contains("set font name of"))
             .last()
             .expect("Terminal was told through AppleScript");
         assert!(script
-            .contains("set font name of default settings to \"MesloLGMNerdFontMono-Regular\""));
+            .contains("set font name of default settings to \"MesloLGMNFM-Regular\""));
         assert!(script.contains("settings set \"Basic\""), "{script}");
         assert!(script.contains("settings set \"Pro\""), "{script}");
         assert!(runs
@@ -6411,6 +6658,134 @@ mod tests {
         assert!(posh.restore_terminal_fonts(false, &mut log), "{log:?}");
         assert!(log.iter().any(|l| l.starts_with("iTerm2: fonts put back in 3")), "{log:?}");
         assert!(!posh.status().undo_available);
+    }
+
+    #[test]
+    fn a_running_terminal_is_asked_for_its_fonts_once_they_have_been_set() {
+        let mut f = Fake::new(Os::MacOs, "/Users/ann");
+        for p in ["defaults", "osascript", "pgrep"] {
+            f.program(p, &format!("/usr/bin/{p}"));
+        }
+        f.answer("defaults", "read", "Basic\n");
+        // The file on disk keeps saying Menlo throughout: Terminal writes it later.
+        f.answers.insert(
+            ("defaults".into(), "export".into()),
+            terminal_plist("Menlo-Regular"),
+        );
+        f.answer("pgrep", "-x Terminal", "123\n");
+        f.answer("osascript", "-e", "");
+        // Terminal, asked for its profiles: Menlo before the font is set, and the Nerd
+        // Font from then on.
+        let menlo = "Basic\tMenlo-Regular\nPro\tMenlo-Regular\n";
+        let nerd = "Basic\tMesloLGMNFM-Regular\nPro\tMesloLGMNFM-Regular\n";
+        f.answer_in_turn("osascript", &format!("-e {APPLE_TERMINAL_LIST}"), &[menlo, nerd]);
+        let fake = Arc::new(f);
+        let posh = Posh::new(fake.clone());
+        assert!(!posh.status().terminals[0].font_set);
+        assert!(
+            !fake.runs().iter().any(|r| r.contains("settings sets")),
+            "Terminal is not asked before the font was ever set: that would start it"
+        );
+
+        let mut log = Vec::new();
+        assert!(posh.set_terminal_fonts(&mut log), "{log:?}");
+        assert!(log.iter().any(|l| l.starts_with("Terminal: font set to MesloLGM Nerd Font Mono in 2 profiles")), "{log:?}");
+        let sets = fake.runs().iter().filter(|r| r.contains("set font name of")).count();
+        assert_eq!(sets, 1, "the first name was taken, so no other was tried");
+        let s = posh.status();
+        assert!(s.terminals[0].font_set, "Terminal's own answer counts, not the stale file");
+        assert_eq!(s.terminals[0].detail, "2 profiles");
+
+        // Terminal not running: the file is all there is, and it still says Menlo.
+        let mut g = Fake::new(Os::MacOs, "/Users/ann");
+        for (path, text) in fake.files.lock().unwrap().iter() {
+            g.file(&path.display().to_string(), text);
+        }
+        g.programs = fake.programs.clone();
+        g.answers = fake.answers.clone();
+        g.answers.remove(&("pgrep".into(), "-x Terminal".into()));
+        assert!(!Posh::new(Arc::new(g)).status().terminals[0].font_set);
+    }
+
+    #[test]
+    fn a_terminal_that_keeps_its_old_font_is_offered_each_name_and_then_told_the_truth() {
+        let mut f = Fake::new(Os::MacOs, "/Users/ann");
+        for p in ["defaults", "osascript", "pgrep"] {
+            f.program(p, &format!("/usr/bin/{p}"));
+        }
+        f.answer("defaults", "read", "Basic\n");
+        f.answers.insert(
+            ("defaults".into(), "export".into()),
+            terminal_plist("Menlo-Regular"),
+        );
+        f.answer("osascript", "-e", "");
+        // macOS resolves the family name to a PostScript name of its own: that one
+        // goes first. Terminal says "done" to every name, and takes the third.
+        f.answer(
+            "osascript",
+            &format!("-l JavaScript -e {APPLE_FONT_PROBE}"),
+            "MesloLGMNFM-Regular: missing\nMesloLGM Nerd Font Mono: opens as MesloLGMNFM-Reg, found\nMesloLGMNerdFontMono-Regular: missing\n",
+        );
+        let menlo = "Basic\tMenlo-Regular\n";
+        let nerd = "Basic\tMesloLGMNFM-Reg\n";
+        f.answer_in_turn(
+            "osascript",
+            &format!("-e {APPLE_TERMINAL_LIST}"),
+            &[menlo, menlo, menlo, nerd],
+        );
+        let fake = Arc::new(f);
+        let posh = Posh::new(fake.clone());
+        let mut log = Vec::new();
+        assert!(posh.set_terminal_fonts(&mut log), "{log:?}");
+        let scripts: Vec<String> = fake
+            .runs()
+            .iter()
+            .filter(|r| r.contains("set font name of"))
+            .cloned()
+            .collect();
+        assert_eq!(scripts.len(), 3, "{scripts:?}");
+        assert!(scripts[0].contains("to \"MesloLGMNFM-Reg\""), "{}", scripts[0]);
+        assert!(scripts[1].contains("to \"MesloLGMNFM-Regular\""), "{}", scripts[1]);
+        assert!(scripts[2].contains("set font name of default settings to \"MesloLGMNerdFontMono-Regular\""));
+        assert!(scripts[2].contains("set font name of settings set \"Basic\" to \"MesloLGMNerdFontMono-Regular\""));
+        assert!(!log.iter().any(|l| l.contains("macOS does not see the font")), "{log:?}");
+        // The record still holds the font that was there before any of that.
+        let record = undo_parse(&fake.text("/Users/ann/.idlewalker/terminal-undo.txt"));
+        assert!(record.iter().any(|u| u.target == "terminal.app:Basic"
+            && u.before.as_deref() == Some("Menlo-Regular")));
+
+        // A Terminal that never takes it: every name is tried, and the window says so
+        // instead of claiming the font was set.
+        let mut f = Fake::new(Os::MacOs, "/Users/ann");
+        for p in ["defaults", "osascript"] {
+            f.program(p, &format!("/usr/bin/{p}"));
+        }
+        f.answer("defaults", "read", "Basic\n");
+        f.answers.insert(
+            ("defaults".into(), "export".into()),
+            terminal_plist("Menlo-Regular"),
+        );
+        f.answer("osascript", "-e", "");
+        f.answer(
+            "osascript",
+            &format!("-l JavaScript -e {APPLE_FONT_PROBE}"),
+            "MesloLGMNFM-Regular: missing\nMesloLGM Nerd Font Mono: missing\navailable fonts with Meslo in the name: none\n",
+        );
+        f.answer_in_turn("osascript", &format!("-e {APPLE_TERMINAL_LIST}"), &[menlo]);
+        let fake = Arc::new(f);
+        let posh = Posh::new(fake.clone());
+        let mut log = Vec::new();
+        assert!(!posh.set_terminal_fonts(&mut log), "{log:?}");
+        assert_eq!(
+            fake.runs().iter().filter(|r| r.contains("set font name of")).count(),
+            APPLE_TERMINAL_FONT_NAMES.len()
+        );
+        assert!(log.iter().any(|l| l.starts_with("Terminal: macOS does not see the font")), "{log:?}");
+        assert!(
+            log.iter().any(|l| l.starts_with("Terminal: did not take the font; it still reports Basic (Menlo-Regular).")),
+            "{log:?}"
+        );
+        assert!(!log.iter().any(|l| l.starts_with("Terminal: font set")), "{log:?}");
     }
 
     #[test]
@@ -6698,6 +7073,12 @@ mod tests {
         let runs = fake.runs();
         assert!(runs.iter().any(|r| r.contains(r"add HKEY_CURRENT_USER\Console /v FaceName /t REG_SZ /d MesloLGM Nerd Font Mono /f")), "{runs:?}");
         assert!(runs.iter().any(|r| r.contains(r"add HKEY_CURRENT_USER\Console\%SystemRoot%_system32_cmd.exe /v FaceName")));
+        // The debug file holds every run of the task, what it printed, and the state after.
+        let debug = fake.text(r"C:\Users\ann\.idlewalker\terminal-debug.txt");
+        assert!(debug.starts_with("IdleWalker terminal prompt: SetTerminalFonts\nOS: Windows\n"), "{debug}");
+        assert!(debug.contains("$ C:\\Windows\\System32\\reg.exe add HKEY_CURRENT_USER\\Console /v FaceName /t REG_SZ /d 'MesloLGM Nerd Font Mono' /f\n  exit: ok"), "{debug}");
+        assert!(debug.contains("---- the state afterwards ----"));
+        assert!(done.log.iter().any(|l| l.ends_with("terminal-debug.txt.")), "{:?}", done.log);
         assert!(!runs.iter().any(|r| r.contains(r"add HKEY_CURRENT_USER\Console\Git Bash")));
         assert!(runs.iter().any(|r| r.contains(r"add HKEY_CURRENT_USER\Console /v FontSize")));
         assert!(!runs.iter().any(|r| r.contains(r"cmd.exe /v FontSize")));

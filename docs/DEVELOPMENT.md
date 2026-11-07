@@ -19,6 +19,9 @@ cargo test --release --test selftest
 | Linux   | `~/.config/idlewalker`                     | `~/.config/autostart/idlewalker.desktop`          |
 
 The folder holds `settings.txt` (menu choices) and `brains.txt` (what the walkers learned).
+The terminal prompt window keeps `terminal-undo.txt` there (every terminal setting it changed,
+with the old value) and, after each font task, `terminal-debug.txt`: every program it ran with
+what that printed, for working out why a terminal did not take the font.
 `brains.txt` has the same format and, on Windows, the same location as the C# version, so
 an existing cast keeps its memories; menu choices not yet in `settings.txt` are read from
 the C# version's registry key. Memories of walkers no longer in the cast are ignored.
