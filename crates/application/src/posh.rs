@@ -1157,9 +1157,87 @@ impl Posh {
                     .file_name()
                     .map(|n| n.to_string_lossy().to_lowercase().replace(' ', ""))
                     .unwrap_or_default();
-                name.contains("meslo") && name.contains("nerdfont")
+                is_nerd_font(&name)
             })
         })
+    }
+
+    /// The font families Windows actually reports, filtered to ones mentioning Meslo
+    /// or a Nerd Font. Windows Terminal rejects any face that is not one of these,
+    /// so the face written into settings must match what Windows registered.
+    /// Nerd Fonts 3+ register the family as "MesloLGM NF", not "MesloLGM Nerd Font".
+    /// Style suffixes (" Regular", " Bold", ...) are stripped so callers get a clean
+    /// family name that both Windows Terminal and VS Code accept.
+    fn windows_font_families(&self) -> Vec<String> {
+        let Some(ps) = self.powershell() else {
+            return Vec::new();
+        };
+        let script = "try { Add-Type -AssemblyName System.Drawing -ErrorAction Stop; \
+                      [System.Drawing.FontFamily]::Families | Where-Object { \
+                      $_.Name -like '*Meslo*' -or $_.Name -like '*Nerd Font*' } | \
+                      ForEach-Object { $_.Name } } catch { }";
+        let r = self.run(
+            &ps,
+            &["-NoProfile", "-NonInteractive", "-Command", script],
+        );
+        if !r.success {
+            self.note(format!("font-family probe: powershell did not succeed"));
+            return Vec::new();
+        }
+        let mut families: Vec<String> = r
+            .stdout
+            .lines()
+            .map(str::trim)
+            .filter(|l| !l.is_empty())
+            .map(|l| {
+                let s = l.to_string();
+                // Strip a trailing style suffix so callers get a clean family name.
+                for suffix in [" Regular", " Bold", " Italic", " Bold Italic"] {
+                    if let Some(stripped) = s.strip_suffix(suffix) {
+                        return stripped.to_string();
+                    }
+                }
+                s
+            })
+            .collect();
+        families.dedup();
+        families
+    }
+
+    /// The family name Windows reports for the MesloLGM Nerd Font, tried in order,
+    /// falling back to `FONT_NAME` (or `FONT_MONO` when `mono`) when nothing matches.
+    fn windows_font_name(&self, mono: bool) -> String {
+        let fallback = if mono { FONT_MONO } else { FONT_NAME };
+        let families = self.windows_font_families();
+        if families.is_empty() {
+            return fallback.to_string();
+        }
+        let wanted: &[&str] = if mono {
+            &[
+                "MesloLGM NF Mono",
+                "MesloLGM Nerd Font Mono",
+                "MesloLGM NFM",
+                "MesloLGM NF Mono Regular",
+            ]
+        } else {
+            &[
+                "MesloLGM NF",
+                "MesloLGM Nerd Font",
+                "MesloLGM Nerd Font Regular",
+            ]
+        };
+        for w in wanted {
+            if families.iter().any(|f| f.eq_ignore_ascii_case(w)) {
+                return w.to_string();
+            }
+        }
+        families
+            .into_iter()
+            .find(|f| {
+                let s = f.to_lowercase().replace(' ', "");
+                s.contains("meslo") && s.contains("nerdfont")
+            })
+            .unwrap_or_else(|| fallback.to_string())
     }
 
     // ---- The terminals: what each one has ----
@@ -2559,13 +2637,21 @@ impl Posh {
             VSCODE_CONTRAST,
             jsonc::get_raw(&text, &[VSCODE_CONTRAST]),
         );
-        let edited = jsonc::set_string(&text, &[VSCODE_FONT], FONT_NAME)
+        let font = self.windows_font_name(false);
+        // VS Code's terminal.integrated.fontFamily accepts a comma-separated list;
+        // fallbacks keep the terminal usable if the primary font is not yet visible
+        // (VS Code caches fonts and may need a restart to pick up a new install).
+        let family = format!("{font}, Consolas, 'Courier New', monospace");
+        self.note(format!(
+            "vscode: detected font family {font}; writing {family}"
+        ));
+        let edited = jsonc::set_string(&text, &[VSCODE_FONT], &family)
             .and_then(|s| jsonc::set_raw(&s, &[VSCODE_CONTRAST], "1"));
         match edited {
             Ok(new) => {
                 if self.write_settings(&t.name, &path, &new, log) {
                     log.push(format!(
-                        "{}: terminal font set to {FONT_NAME}; its contrast rule no longer recolours the prompt.",
+                        "{}: terminal font set to {font} (with fallbacks); its contrast rule no longer recolours the prompt. If icons still show as boxes or question marks: (1) reload VS Code window (Ctrl+Shift+P, Developer: Reload Window) so it picks up the newly installed font, (2) confirm Oh My Posh is running — open a new VS Code terminal and the prompt should be themed, and (3) check Windows Settings > Personalization > Fonts that a MesloLGM Nerd Font family is actually installed.",
                         t.name
                     ));
                     return true;
@@ -2584,11 +2670,12 @@ impl Posh {
         let Some(text) = self.settings_text(&t.name, &path, log) else {
             return false;
         };
-        match wt_with_font(&text, &format!("wt:{}", t.target), changes) {
+        let font = self.windows_font_name(false);
+        match wt_with_font(&text, &format!("wt:{}", t.target), &font, changes) {
             Ok((new, profiles)) => {
                 if self.write_settings(&t.name, &path, &new, log) {
                     log.push(format!(
-                        "{}: font set to {FONT_NAME} in {} and the colour adjustment turned off.",
+                        "{}: font set to {font} in {} and the colour adjustment turned off.",
                         t.name,
                         profiles_text(profiles)
                     ));
@@ -2623,6 +2710,7 @@ impl Posh {
         let keys = self.console_keys();
         let mut ok = true;
         let mut n = 0;
+        let font = self.windows_font_name(true);
         for (i, k) in keys.iter().enumerate() {
             let root = i == 0;
             if !root && reg_value(k, "FaceName").is_none() {
@@ -2631,7 +2719,7 @@ impl Posh {
             let target = format!("console:{}", k.path);
             // 0x36: a TrueType font; 16 pixels tall, width left to the font.
             let mut wanted: Vec<(&str, &str, &str)> = vec![
-                ("FaceName", "REG_SZ", FONT_MONO),
+                ("FaceName", "REG_SZ", font.as_str()),
                 ("FontFamily", "REG_DWORD", "54"),
             ];
             if root {
@@ -2648,7 +2736,7 @@ impl Posh {
             // Nothing saved yet: the root key is made with the font.
             let target = r"console:HKEY_CURRENT_USER\Console";
             for (name, ty, data) in [
-                ("FaceName", "REG_SZ", FONT_MONO),
+                ("FaceName", "REG_SZ", font.as_str()),
                 ("FontFamily", "REG_DWORD", "54"),
                 ("FontSize", "REG_DWORD", "1048576"),
             ] {
@@ -2659,7 +2747,7 @@ impl Posh {
         }
         if ok {
             log.push(format!(
-                "Console windows: font set to {FONT_MONO} in {} for new windows. A shortcut with its own font settings keeps them.",
+                "Console windows: font set to {font} in {} for new windows. A shortcut with its own font settings keeps them.",
                 profiles_text(n)
             ));
         } else {
@@ -4373,10 +4461,10 @@ fn wt_profile_id(text: &str, open: usize) -> Option<String> {
 
 /// The settings with the Nerd Font in the defaults and in every profile that has a font
 /// of its own, the colour adjustment off, and each old value remembered.
-fn wt_with_font(text: &str, target: &str, changes: &mut Changes) -> Result<(String, usize), String> {
+fn wt_with_font(text: &str, target: &str, font: &str, changes: &mut Changes) -> Result<(String, usize), String> {
     let mut t = text.to_string();
     changes.remember(target, "defaults.font.face", jsonc::get_raw(&t, &WT_FACE));
-    t = jsonc::set_string(&t, &WT_FACE, FONT_NAME)?;
+    t = jsonc::set_string(&t, &WT_FACE, font)?;
     if let Some(old) = jsonc::get_raw(&t, &WT_LEGACY_FACE) {
         changes.remember(target, "defaults.fontFace", Some(old));
         t = jsonc::remove(&t, &WT_LEGACY_FACE)?;
@@ -4403,7 +4491,7 @@ fn wt_with_font(text: &str, target: &str, changes: &mut Changes) -> Result<(Stri
             t = jsonc::remove_at(&t, open, &["fontFace"])?;
         }
         changes.remember(target, &format!("list:{id}:font.face"), face);
-        t = jsonc::set_raw_at(&t, open, &["font", "face"], &jsonc::quoted(FONT_NAME))?;
+        t = jsonc::set_raw_at(&t, open, &["font", "face"], &jsonc::quoted(font))?;
         n += 1;
     }
     Ok((t, n))
@@ -6473,7 +6561,7 @@ mod tests {
     fn windows_terminal_gets_the_font_in_every_profile_and_gives_it_back() {
         assert_eq!(wt_status(WT), (false, 3));
         let mut changes = Changes { list: Vec::new() };
-        let (set, n) = wt_with_font(WT, "wt:x", &mut changes).unwrap();
+        let (set, n) = wt_with_font(WT, "wt:x", FONT_NAME, &mut changes).unwrap();
         assert_eq!(n, 3);
         assert_eq!(wt_status(&set), (true, 3));
         assert_eq!(jsonc::get_string(&set, &WT_FACE).as_deref(), Some(FONT_NAME));
@@ -7070,7 +7158,7 @@ mod tests {
         let code = fake.text(r"C:\Users\ann\AppData\Roaming\Code\User\settings.json");
         assert_eq!(
             code,
-            "{\n    \"terminal.integrated.minimumContrastRatio\": 1,\n    \"terminal.integrated.fontFamily\": \"MesloLGM Nerd Font\",\n    \"a\": 1\n}\n"
+            "{\n    \"terminal.integrated.minimumContrastRatio\": 1,\n    \"terminal.integrated.fontFamily\": \"MesloLGM Nerd Font, Consolas, 'Courier New', monospace\",\n    \"a\": 1\n}\n"
         );
         let wt = fake.text(r"C:\Users\ann\AppData\Local\Packages\Microsoft.WindowsTerminal_8wekyb3d8bbwe\LocalState\settings.json");
         assert_eq!(wt_status(&wt), (true, 1));
