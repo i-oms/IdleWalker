@@ -255,6 +255,50 @@ pub(crate) fn final_address(url: &str) -> Option<String> {
 }
 
 /// A program on the PATH, as a shell would find it.
+/// The PATH a login shell has. A program started from the Dock or a desktop menu gets a
+/// shorter one, without Homebrew, Nix or the person's own folders.
+fn login_path() -> Option<std::ffi::OsString> {
+    use std::io::Read;
+    static PATH: std::sync::OnceLock<Option<std::ffi::OsString>> = std::sync::OnceLock::new();
+    PATH.get_or_init(|| {
+        if cfg!(windows) {
+            return None;
+        }
+        let shell = std::env::var_os("SHELL").unwrap_or_else(|| "/bin/sh".into());
+        let mut child = std::process::Command::new(shell)
+            .args(["-lc", "printf %s \"$PATH\""])
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .ok()?;
+        let mut out = child.stdout.take()?;
+        let reader = std::thread::spawn(move || {
+            let mut text = String::new();
+            let _ = out.read_to_string(&mut text);
+            text
+        });
+        // A profile that waits for something must not hold the window up.
+        for _ in 0..30 {
+            match child.try_wait() {
+                Ok(Some(_)) => {
+                    return reader
+                        .join()
+                        .ok()
+                        .filter(|t| !t.is_empty())
+                        .map(std::ffi::OsString::from);
+                }
+                Ok(None) => std::thread::sleep(std::time::Duration::from_millis(100)),
+                Err(_) => break,
+            }
+        }
+        let _ = child.kill();
+        let _ = child.wait();
+        None
+    })
+    .clone()
+}
+
 pub(crate) fn find_program(name: &str) -> Option<std::path::PathBuf> {
     let path = std::env::var_os("PATH")?;
     let exts: Vec<String> = if cfg!(windows) {
@@ -274,7 +318,9 @@ pub(crate) fn find_program(name: &str) -> Option<std::path::PathBuf> {
     } else {
         vec![String::new()]
     };
-    for dir in std::env::split_paths(&path) {
+    let login = login_path();
+    let extra = login.iter().flat_map(std::env::split_paths);
+    for dir in std::env::split_paths(&path).chain(extra) {
         if dir.as_os_str().is_empty() {
             continue;
         }

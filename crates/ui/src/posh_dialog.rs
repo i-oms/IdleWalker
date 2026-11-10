@@ -8,7 +8,8 @@ use super::dialogs::Outcome;
 use super::gfx::{self, button, checkbox, Canvas, Font, Mouse};
 use super::{Services, UserEvent};
 use idlewalker_application::posh::{
-    Done, Posh, Shell, Status, Task, DEFAULT_THEME, FONT_NAME, RELEASES, THEME_GALLERY,
+    Cursor, Done, Look, Posh, Shell, Status, Task, DEFAULT_THEME, FONT_NAME, PALETTES, RELEASES,
+    THEME_GALLERY,
 };
 use std::collections::HashMap;
 use winit::event_loop::EventLoopProxy;
@@ -35,6 +36,9 @@ pub struct PoshDialog {
     scroll: i32,
     /// "Uninstall" was clicked once; the bottom row asks before doing it.
     confirm_uninstall: bool,
+    /// The appearance panel is showing, and what is picked in each of its rows.
+    show_look: bool,
+    look_picks: [usize; 6],
 }
 
 impl PoshDialog {
@@ -52,6 +56,8 @@ impl PoshDialog {
             filter: String::new(),
             scroll: 0,
             confirm_uninstall: false,
+            show_look: false,
+            look_picks: [0; 6],
         };
         d.start(Task::Refresh, "Reading the terminal setup...");
         d
@@ -98,6 +104,10 @@ impl PoshDialog {
         s: f64,
         services: &Services,
     ) -> Outcome {
+        if self.show_look {
+            self.draw_look(c, f, m, s);
+            return Outcome::None;
+        }
         c.clear(gfx::BACK);
         let px = |v: f64| (v * s) as i32;
         let (title, text, small) = ((18.0 * s) as f32, (13.0 * s) as f32, (12.0 * s) as f32);
@@ -347,7 +357,7 @@ impl PoshDialog {
                     right + label_w + px(8.0),
                     y + px(4.0),
                     right_w - label_w - px(8.0),
-                    &sh.profile.display().to_string(),
+                    &sh.shown,
                     small,
                     gfx::DIM,
                 );
@@ -425,7 +435,10 @@ impl PoshDialog {
             let cols: usize = if st.terminals.len() > 8 { 2 } else { 1 };
             let col_w = right_w / cols as i32;
             for (i, t) in st.terminals.iter().enumerate() {
-                let (what, colour) = if t.font_set {
+                let by_hand = t.kind == idlewalker_application::posh::TerminalKind::ByHand;
+                let (what, colour) = if by_hand {
+                    ("set the font yourself", gfx::DIM)
+                } else if t.font_set {
                     ("uses the Nerd Font", gfx::GREEN)
                 } else {
                     ("not using the Nerd Font yet", gfx::WHITE)
@@ -454,7 +467,13 @@ impl PoshDialog {
             let settable = st
                 .terminals
                 .iter()
-                .any(|t| t.kind != idlewalker_application::posh::TerminalKind::BuiltIn);
+                .any(|t| {
+                    !matches!(
+                        t.kind,
+                        idlewalker_application::posh::TerminalKind::BuiltIn
+                            | idlewalker_application::posh::TerminalKind::ByHand
+                    )
+                });
             if settable && btn(c, f, right, y, px(220.0), "Use the font in these terminals") {
                 next = Some((Task::SetTerminalFonts, "Setting the terminal fonts..."));
             }
@@ -534,6 +553,18 @@ impl PoshDialog {
         {
             next = Some((Task::Remove, "Taking the prompt out of the profiles..."));
         }
+        if !confirming
+            && btn(
+                c,
+                f,
+                left + width - px(210.0),
+                buttons_y,
+                px(110.0),
+                "Appearance...",
+            )
+        {
+            self.show_look = true;
+        }
         if btn(c, f, left + width - px(90.0), buttons_y, px(90.0), "Close") {
             return Outcome::Close;
         }
@@ -575,5 +606,107 @@ impl PoshDialog {
             self.start(task, what);
         }
         Outcome::None
+    }
+
+    /// The shells a default can be picked from, in the order of the last row's choices.
+    fn look_shells(&self) -> Vec<Shell> {
+        self.status
+            .as_ref()
+            .map(|st| {
+                st.shells
+                    .iter()
+                    .filter(|s| s.blocker.is_none() && s.shell != Shell::Wsl)
+                    .map(|s| s.shell)
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// The panel with font size, colours, cursor, opacity, ligatures and default shell.
+    /// "Keep" leaves a setting as each terminal has it.
+    fn draw_look(&mut self, c: &mut Canvas, f: &mut Font, m: &Mouse, s: f64) {
+        const KEEP: &str = "Keep";
+        const SIZES: [u32; 10] = [9, 10, 11, 12, 13, 14, 15, 16, 18, 20];
+        const OPACITIES: [u32; 6] = [100, 95, 90, 85, 80, 70];
+        c.clear(gfx::BACK);
+        let px = |v: f64| (v * s) as i32;
+        let (title, text, small) = ((18.0 * s) as f32, (13.0 * s) as f32, (12.0 * s) as f32);
+        let left = px(18.0);
+        let width = c.w - 2 * left;
+        let bh = px(28.0);
+        let idle = self.busy.is_none();
+        let shells = self.look_shells();
+        let with_keep = |rest: Vec<String>| {
+            let mut v = vec![KEEP.to_string()];
+            v.extend(rest);
+            v
+        };
+        let rows: [(&str, Vec<String>); 6] = [
+            ("Font size", with_keep(SIZES.iter().map(u32::to_string).collect())),
+            ("Colours", with_keep(PALETTES.iter().map(|p| p.name.to_string()).collect())),
+            ("Cursor", with_keep(vec!["Block".into(), "Bar".into(), "Underline".into()])),
+            ("Opacity", with_keep(OPACITIES.iter().map(|o| format!("{o}%")).collect())),
+            ("Ligatures", with_keep(vec!["On".into(), "Off".into()])),
+            ("Default shell", with_keep(shells.iter().map(|s| s.name().to_string()).collect())),
+        ];
+        c.text(f, left, px(14.0), "Terminal appearance", title, gfx::ACCENT);
+        let what = self.busy.unwrap_or("Applies to every terminal listed that has the setting; the log says what each one took.");
+        c.text_fit(f, left, px(44.0), width, what, small, gfx::DIM);
+        let mut y = px(76.0);
+        let (arrow, value_w) = (px(32.0), px(260.0));
+        for (i, (label, options)) in rows.iter().enumerate() {
+            c.text(f, left, y + px(6.0), label, text, gfx::WHITE);
+            let x = left + px(130.0);
+            let n = options.len();
+            let pick = self.look_picks[i] % n;
+            if button(c, f, m, x, y, arrow, bh, s, "<") && idle {
+                self.look_picks[i] = (pick + n - 1) % n;
+            }
+            let colour = if pick == 0 { gfx::DIM } else { gfx::WHITE };
+            let shown = self.look_picks[i] % n;
+            c.text_fit(f, x + arrow + px(12.0), y + px(6.0), value_w - px(24.0), &options[shown], text, colour);
+            if button(c, f, m, x + arrow + value_w, y, arrow, bh, s, ">") && idle {
+                self.look_picks[i] = (pick + 1) % n;
+            }
+            y += bh + px(8.0);
+        }
+        c.text_fit(
+            f,
+            left,
+            y + px(4.0),
+            width,
+            "Open terminals pick most of this up when reopened. MesloLGM has no ligatures, so that row only matters with another font.",
+            small,
+            gfx::DIM,
+        );
+        y += px(30.0);
+        let p = self.look_picks;
+        let nth = |i: usize, len: usize| (p[i] % (len + 1)).checked_sub(1);
+        let look = Look {
+            font_size: nth(0, SIZES.len()).map(|i| SIZES[i]),
+            colours: nth(1, PALETTES.len()),
+            cursor: nth(2, 3).map(|i| [Cursor::Block, Cursor::Bar, Cursor::Underline][i]),
+            opacity: nth(3, OPACITIES.len()).map(|i| OPACITIES[i]),
+            ligatures: nth(4, 2).map(|i| i == 0),
+            default_shell: nth(5, shells.len()).map(|i| shells[i]),
+        };
+        if button(c, f, m, left, y, px(170.0), bh, s, "Apply to the terminals") && idle {
+            self.start(Task::SetLook(look), "Changing how the terminals look...");
+        }
+        if button(c, f, m, left + px(180.0), y, px(190.0), bh, s, "Put the terminals back") && idle {
+            self.start(Task::RestoreTerminalFonts, "Putting the terminals back...");
+        }
+        if button(c, f, m, left + width - px(90.0), y, px(90.0), bh, s, "Back") {
+            self.show_look = false;
+        }
+        y += bh + px(12.0);
+        let log_h = c.h - y - px(12.0);
+        c.rect(left, y, width, log_h, gfx::PANEL);
+        let log_line = px(17.0);
+        let shown = ((log_h - px(8.0)) / log_line).max(1) as usize;
+        let start = self.log.len().saturating_sub(shown);
+        for (n, entry) in self.log[start..].iter().enumerate() {
+            c.text_fit(f, left + px(8.0), y + px(4.0) + n as i32 * log_line, width - px(16.0), entry, small, gfx::WHITE);
+        }
     }
 }
