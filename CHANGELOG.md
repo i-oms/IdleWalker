@@ -19,6 +19,10 @@ Notable changes are recorded here. The format follows
   Fish added to Git for Windows, JetBrains IDEs, Tilda, COSMIC Terminal, iTerm2 Dynamic
   Profiles, portable VS Code and Windows Terminal, and Windows shortcuts with their own
   console font. Terminals whose font cannot be set from outside are listed with where to set it.
+- The terminal prompt window has an Appearance panel for font size, colour scheme, cursor,
+  opacity, ligatures and default shell, written to each terminal that has the setting and
+  put back with the rest. It also covers ROXTerm, LilyTerm, Flatpak Ptyxis and Black Box, and
+  lists more terminals with where to set their font.
 - Walkers on macOS no longer wobble or stretch while walking: each sprite window keeps
   its size and sits on whole points, and the picture moves inside it in one transaction.
 - Smoother motion on macOS: frames follow the display's refresh through a display link
