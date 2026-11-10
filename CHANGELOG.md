@@ -8,6 +8,10 @@ Notable changes are recorded here. The format follows
 
 ### Fixed
 
+- Installing the Nerd Font from the terminal prompt window: Oh My Posh versions before 30
+  are now run without their full-screen interface, a failed install is no longer reported
+  as installed, its real error is shown instead of unreadable terminal codes, and only
+  MesloLGM counts as the font rather than any Nerd Font on the machine.
 - Walkers on macOS no longer wobble or stretch while walking: each sprite window keeps
   its size and sits on whole points, and the picture moves inside it in one transaction.
 - Smoother motion on macOS: frames follow the display's refresh through a display link

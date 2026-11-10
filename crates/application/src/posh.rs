@@ -299,6 +299,13 @@ fn is_nerd_font(name: &str) -> bool {
         .any(|tail| family.ends_with(tail) && family.len() > tail.len())
 }
 
+/// Whether a file is the MesloLGM Nerd Font the terminals get pointed at. Another Nerd
+/// Font on the machine does not give them that family, nor does the dotted-zero MesloLGMDZ.
+fn is_wanted_font_file(name: &str) -> bool {
+    let s = name.to_lowercase().replace(' ', "");
+    s.starts_with("meslolgm") && !s.starts_with("meslolgmdz") && is_nerd_font(&s)
+}
+
 /// Where the managed block sits: from the start of its first line to after its last.
 fn block_range(text: &str, comment: &str) -> Option<(usize, usize)> {
     let begin = format!("{comment} {BEGIN}");
@@ -441,13 +448,60 @@ fn debug_clip(text: &str) -> String {
     format!("{}\n[... {} more bytes]", &text[..end], text.len() - end)
 }
 
+/// What a program printed with the terminal control sequences taken out: colours, cursor
+/// moves, and the status reports Oh My Posh sends to the terminal.
+fn plain_text(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut chars = text.chars();
+    while let Some(c) = chars.next() {
+        if c != '\x1b' {
+            out.push(c);
+            continue;
+        }
+        match chars.next() {
+            Some('[') => {
+                for c in chars.by_ref() {
+                    if ('\x40'..='\x7e').contains(&c) {
+                        break;
+                    }
+                }
+            }
+            Some(']') => {
+                while let Some(c) = chars.next() {
+                    if c == '\x07' {
+                        break;
+                    }
+                    if c == '\x1b' {
+                        chars.next();
+                        break;
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
+/// The error Oh My Posh reported, if it did. Recent versions put it only in a status
+/// report for the terminal, `ESC ] 7501 ; state=error:app=oh-my-posh:msg=<base64> ESC \`,
+/// and is not printed as text.
+fn reported_error(text: &str) -> Option<String> {
+    let (_, report) = text.rsplit_once("7501;state=error:")?;
+    let report = report.split(['\x07', '\x1b']).next()?;
+    let (_, message) = report.split_once("msg=")?;
+    let message = String::from_utf8(base64_decode(message)).ok()?;
+    let message = message.trim();
+    (!message.is_empty()).then(|| message.to_string())
+}
+
 fn tail(r: &RunResult) -> Vec<String> {
     let text = if r.stderr.trim().is_empty() {
         &r.stdout
     } else {
         &r.stderr
     };
-    let lines: Vec<String> = text
+    let lines: Vec<String> = plain_text(text)
         .split(['\n', '\r'])
         .map(str::trim)
         .filter(|l| !l.is_empty() && !l.chars().all(|c| "-\\|/ █▒░".contains(c)))
@@ -1153,11 +1207,8 @@ impl Posh {
         });
         dirs.iter().any(|d| {
             self.ws.list_files(d, 4).iter().any(|f| {
-                let name = f
-                    .file_name()
-                    .map(|n| n.to_string_lossy().to_lowercase().replace(' ', ""))
-                    .unwrap_or_default();
-                is_nerd_font(&name)
+                f.file_name()
+                    .is_some_and(|n| is_wanted_font_file(&n.to_string_lossy()))
             })
         })
     }
@@ -2538,8 +2589,21 @@ impl Posh {
         let dir = self.user_font_dir();
         let before = self.ws.list_files(&dir, 2);
         log.push(format!("Installing {FONT_NAME}..."));
-        let r = self.run(&binary, &["font", "install", FONT_PACKAGE]);
+        // Before version 30 the command opens a full-screen interface unless told not to;
+        // from version 30 it has no such interface and refuses the flag.
+        let mut args = vec!["font", "install", FONT_PACKAGE];
+        let help = self.run(&binary, &["font", "install", "--help"]);
+        if help.stdout.contains("--headless") {
+            args.push("--headless");
+        }
+        let r = self.run(&binary, &args);
         log.extend(tail(&r));
+        let error = reported_error(&r.stdout);
+        if let Some(e) = &error {
+            log.push(format!("    {e}"));
+        }
+        // It exits cleanly even when every single font failed to install.
+        let none_installed = r.stdout.contains("No matching font families");
         // The files that appeared are this program's to take away again.
         let mut changes = Changes {
             list: self.undo_load(),
@@ -2550,7 +2614,7 @@ impl Posh {
             }
         }
         self.undo_save(&changes.list);
-        if self.font_installed() {
+        if r.success && error.is_none() && !none_installed && self.font_installed() {
             log.push(format!("{FONT_NAME} is installed."));
             true
         } else {
@@ -7047,6 +7111,85 @@ mod tests {
         assert!(!done.ok);
         assert!(done.status.binary.is_none());
         assert_eq!(done.status.installer, "the Oh My Posh install script");
+    }
+
+    #[test]
+    fn oh_my_posh_output_is_read_without_its_terminal_codes() {
+        // Real output of 31.9.1 when the install fails.
+        let failed = "\x1b]7501;state=error:app=oh-my-posh:msg=b3BlbiAuL2RvZXMtbm90LWV4aXN0LnppcDogVGhlIHN5c3RlbSBjYW5ub3QgZmluZCB0aGUgZmlsZSBzcGVjaWZpZWQu\x1b\\";
+        assert_eq!(plain_text(failed), "");
+        assert_eq!(
+            reported_error(failed).as_deref(),
+            Some("open ./does-not-exist.zip: The system cannot find the file specified.")
+        );
+        let working = "\x1b]7501;state=working:app=oh-my-posh:msg=UmVzb2x2aW5nIGZvbnQ=\x1b\\\x1b[?25l\x1b[2KInstalled Meslo\x1b[?25h";
+        assert_eq!(plain_text(working), "Installed Meslo");
+        assert_eq!(reported_error(working), None);
+    }
+
+    #[test]
+    fn only_mesloglm_counts_as_the_font() {
+        for yes in [
+            "MesloLGMNerdFont-Regular.ttf",
+            "MesloLGMNerdFontMono-Bold.ttf",
+            "MesloLGMNF-Regular.ttf",
+            "Meslo LG M Regular Nerd Font Complete.ttf",
+        ] {
+            assert!(is_wanted_font_file(yes), "{yes}");
+        }
+        for no in [
+            "FiraCodeNerdFont-Regular.ttf",
+            "MesloLGSNerdFont-Regular.ttf",
+            "MesloLGMDZNerdFont-Regular.ttf",
+            "MesloLGM-Regular.ttf",
+        ] {
+            assert!(!is_wanted_font_file(no), "{no}");
+        }
+    }
+
+    const MESLO_FILE: &str = "/home/ann/.local/share/fonts/MesloLGMNerdFont-Regular.ttf";
+
+    #[test]
+    fn a_failed_font_install_is_not_reported_as_installed() {
+        // Exits with an error, with the font left over from before.
+        let mut f = linux_box();
+        f.file(MESLO_FILE, "");
+        let done = Posh::new(Arc::new(f)).perform(&Task::InstallFont);
+        assert!(!done.ok, "{:?}", done.log);
+        // Exits cleanly having installed nothing.
+        let mut f = linux_box();
+        f.file(MESLO_FILE, "");
+        f.answer("oh-my-posh", "font", "No matching font families were installed.\n");
+        let done = Posh::new(Arc::new(f)).perform(&Task::InstallFont);
+        assert!(!done.ok, "{:?}", done.log);
+        // Another Nerd Font is no substitute.
+        let mut f = linux_box();
+        f.file("/home/ann/.local/share/fonts/FiraCodeNerdFont-Regular.ttf", "");
+        f.answer("oh-my-posh", "font", "done\n");
+        let done = Posh::new(Arc::new(f)).perform(&Task::InstallFont);
+        assert!(!done.ok && !done.status.font_installed, "{:?}", done.log);
+    }
+
+    #[test]
+    fn the_font_install_is_headless_only_where_that_flag_exists() {
+        for (help, last) in [("      --headless   install font without TUI\n", "--headless"), ("      --zip-folder string\n", "meslo")] {
+            let mut f = linux_box();
+            f.answer("oh-my-posh", "font", "done\n");
+            f.answers.insert(
+                ("oh-my-posh".into(), "font install --help".into()),
+                help.into(),
+            );
+            f.drops.push(("font".into(), PathBuf::from(MESLO_FILE)));
+            let fake = Arc::new(f);
+            let done = Posh::new(fake.clone()).perform(&Task::InstallFont);
+            assert!(done.ok, "{:?}", done.log);
+            let runs = fake.runs.lock().unwrap();
+            let install = runs
+                .iter()
+                .find(|r| r.contains("font install meslo"))
+                .expect("the install ran");
+            assert!(install.ends_with(last), "{install}");
+        }
     }
 
     #[test]
