@@ -347,7 +347,7 @@ impl PoshDialog {
                     right + label_w + px(8.0),
                     y + px(4.0),
                     right_w - label_w - px(8.0),
-                    &sh.profile.display().to_string(),
+                    &sh.shown,
                     small,
                     gfx::DIM,
                 );
@@ -425,7 +425,10 @@ impl PoshDialog {
             let cols: usize = if st.terminals.len() > 8 { 2 } else { 1 };
             let col_w = right_w / cols as i32;
             for (i, t) in st.terminals.iter().enumerate() {
-                let (what, colour) = if t.font_set {
+                let by_hand = t.kind == idlewalker_application::posh::TerminalKind::ByHand;
+                let (what, colour) = if by_hand {
+                    ("set the font yourself", gfx::DIM)
+                } else if t.font_set {
                     ("uses the Nerd Font", gfx::GREEN)
                 } else {
                     ("not using the Nerd Font yet", gfx::WHITE)
@@ -454,7 +457,13 @@ impl PoshDialog {
             let settable = st
                 .terminals
                 .iter()
-                .any(|t| t.kind != idlewalker_application::posh::TerminalKind::BuiltIn);
+                .any(|t| {
+                    !matches!(
+                        t.kind,
+                        idlewalker_application::posh::TerminalKind::BuiltIn
+                            | idlewalker_application::posh::TerminalKind::ByHand
+                    )
+                });
             if settable && btn(c, f, right, y, px(220.0), "Use the font in these terminals") {
                 next = Some((Task::SetTerminalFonts, "Setting the terminal fonts..."));
             }

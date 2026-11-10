@@ -12,6 +12,13 @@ Notable changes are recorded here. The format follows
   are now run without their full-screen interface, a failed install is no longer reported
   as installed, its real error is shown instead of unreadable terminal codes, and only
   MesloLGM counts as the font rather than any Nerd Font on the machine.
+- The terminal prompt window now also sets up Elvish, Xonsh and Yash, the rest of the shells
+  Oh My Posh documents, and sets the font in each named VS Code profile, in Flatpak and Snap
+  editors, in more VS Code based editors, in Scoop's Windows Terminal, and in Black Box.
+- The terminal prompt window now also covers WSL distros, MSYS2 and Cygwin shells, Zsh and
+  Fish added to Git for Windows, JetBrains IDEs, Tilda, COSMIC Terminal, iTerm2 Dynamic
+  Profiles, portable VS Code and Windows Terminal, and Windows shortcuts with their own
+  console font. Terminals whose font cannot be set from outside are listed with where to set it.
 - Walkers on macOS no longer wobble or stretch while walking: each sprite window keeps
   its size and sits on whole points, and the picture moves inside it in one transaction.
 - Smoother motion on macOS: frames follow the display's refresh through a display link

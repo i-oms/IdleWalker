@@ -59,6 +59,94 @@ const UNDO_FILE: &str = "terminal-undo.txt";
 const DEBUG_FILE: &str = "terminal-debug.txt";
 /// How much of what a program printed the debug file keeps, per stream.
 const DEBUG_KEEP: usize = 6000;
+/// JetBrains IDEs: where the terminal's own font is kept, in current versions, and the
+/// console font that older versions give the terminal.
+const JETBRAINS_FONTS: [(&str, &str); 2] = [
+    ("terminal-font.xml", "TerminalFontOptions"),
+    ("console-font.xml", "ConsoleFont"),
+];
+/// Finds the shortcuts with a font of their own, sets ours, and prints what each had.
+/// Bytes are as the Shell Link format's console block lays them out: family at 36, name
+/// at 44 for 64 bytes; a block that was never given a font has 0 and 0xFE filler there.
+const SHORTCUT_APPLY: &str = r##"[Console]::OutputEncoding=[Text.Encoding]::UTF8
+$dirs = "$env:APPDATA\Microsoft\Windows\Start Menu","$env:ProgramData\Microsoft\Windows\Start Menu",[Environment]::GetFolderPath('Desktop'),"$env:APPDATA\Microsoft\Internet Explorer\Quick Launch"
+foreach ($d in $dirs) { Get-ChildItem -LiteralPath $d -Recurse -Filter *.lnk -File -ErrorAction SilentlyContinue | ForEach-Object { try {
+  $b = [IO.File]::ReadAllBytes($_.FullName)
+  $i = [BitConverter]::ToString($b).IndexOf('CC-00-00-00-02-00-00-A0', [StringComparison]::Ordinal)
+  if ($i -lt 0) { return }
+  $o = $i / 3
+  $family = [BitConverter]::ToUInt32($b, $o + 36)
+  if ($family -eq 0 -or $b[$o + 44] -ge 0xFE) { return }
+  $face = [Text.Encoding]::Unicode.GetString($b, $o + 44, 64).Split([char]0)[0]
+  if ($face -eq '' -or $face -like '*Nerd Font*') { return }
+  $new = [Text.Encoding]::Unicode.GetBytes('@FONT@')
+  [Array]::Clear($b, $o + 44, 64)
+  [Array]::Copy($new, 0, $b, $o + 44, $new.Length)
+  [BitConverter]::GetBytes([uint32]54).CopyTo($b, $o + 36)
+  [IO.File]::WriteAllBytes($_.FullName, $b)
+  "$($_.FullName)`t$face`t$family"
+} catch { } } }"##;
+const SHORTCUT_RESTORE: &str = r##"function Set-ShortcutFont($file, $name, $family) { try {
+  $b = [IO.File]::ReadAllBytes($file)
+  $i = [BitConverter]::ToString($b).IndexOf('CC-00-00-00-02-00-00-A0', [StringComparison]::Ordinal)
+  if ($i -lt 0) { return }
+  $o = $i / 3
+  $new = [Text.Encoding]::Unicode.GetBytes($name)
+  [Array]::Clear($b, $o + 44, 64)
+  [Array]::Copy($new, 0, $b, $o + 44, $new.Length)
+  [BitConverter]::GetBytes([uint32]$family).CopyTo($b, $o + 36)
+  [IO.File]::WriteAllBytes($file, $b)
+} catch { } }
+@ROWS@"##;
+/// Which shells have the prompt in WSL, for this window; and the script that does the work.
+const WSL_RECORD: &str = "wsl-prompt.txt";
+const WSL_SCRIPT_FILE: &str = "wsl-prompt-setup.sh";
+/// What runs inside a distro. `@SETUP@` is left out when the prompt is being taken away.
+const WSL_SCRIPT: &str = r##"#!/bin/sh
+# Written and run by IdleWalker.
+begin='# @BEGIN@'
+end='# @END@'
+clear_block() {
+    [ -f "$1" ] || return 0
+    sed -i "\|^$begin\$|,\|^$end\$|d" "$1"
+}
+for f in "$HOME/.bashrc" "$HOME/.zshrc" "$HOME/.yashrc" "$HOME/.xonshrc" \
+    "$HOME/.config/fish/config.fish" "$HOME/.elvish/rc.elv" \
+    "$HOME/.config/elvish/rc.elv" "$HOME/.config/nushell/config.nu"; do
+    clear_block "$f"
+done
+@SETUP@
+"##;
+/// The part of that script which installs Oh My Posh in the distro and adds the prompt.
+const WSL_SETUP: &str = r##"have() { command -v "$1" >/dev/null 2>&1; }
+omp=$(command -v oh-my-posh || true)
+[ -n "$omp" ] || omp="$HOME/.local/bin/oh-my-posh"
+if [ ! -x "$omp" ]; then
+    for tool in curl unzip bash; do
+        have "$tool" || { echo "needs $tool: install it in this distro, then try again"; exit 1; }
+    done
+    mkdir -p "$HOME/.local/bin"
+    curl -fsSL @INSTALL@ | bash -s -- -d "$HOME/.local/bin" || { echo "Oh My Posh did not install"; exit 1; }
+fi
+[ -x "$omp" ] || { echo "Oh My Posh did not install"; exit 1; }
+cfg=@CONFIG@
+add() {
+    mkdir -p "$(dirname "$1")"
+    { echo "$begin"; printf '%s\n' "$2"; echo "$end"; } >> "$1"
+    echo "prompt set in $1"
+}
+have bash && add "$HOME/.bashrc" "eval \"\$('$omp' init bash$cfg)\""
+have zsh && add "$HOME/.zshrc" "eval \"\$('$omp' init zsh$cfg)\""
+have yash && add "$HOME/.yashrc" "eval \"\$('$omp' init yash$cfg)\""
+have fish && add "$HOME/.config/fish/config.fish" "'$omp' init fish$cfg | source"
+have xonsh && add "$HOME/.xonshrc" "execx(\$('$omp' init xonsh$cfg))"
+have nu && add "$HOME/.config/nushell/config.nu" "^'$omp' init nu$cfg"
+if have elvish; then
+    rc="$HOME/.config/elvish/rc.elv"
+    [ -f "$HOME/.elvish/rc.elv" ] && rc="$HOME/.elvish/rc.elv"
+    add "$rc" "eval ('$omp' init elvish$cfg)"
+fi
+exit 0"##;
 /// VS Code's terminal font, and the contrast rule that recolours a prompt's segments
 /// unless it is turned off (1).
 const VSCODE_FONT: &str = "terminal.integrated.fontFamily";
@@ -81,6 +169,17 @@ pub enum Shell {
     Fish,
     Cmd,
     Nu,
+    Elvish,
+    Xonsh,
+    Yash,
+    Msys2Bash,
+    Msys2Zsh,
+    Msys2Fish,
+    CygwinBash,
+    CygwinZsh,
+    CygwinFish,
+    /// Every WSL distro: the prompt goes in the shells inside each one.
+    Wsl,
 }
 
 impl Shell {
@@ -93,6 +192,16 @@ impl Shell {
             Shell::Fish => "Fish",
             Shell::Cmd => "Command Prompt",
             Shell::Nu => "Nushell",
+            Shell::Elvish => "Elvish",
+            Shell::Xonsh => "Xonsh",
+            Shell::Yash => "Yash",
+            Shell::Msys2Bash => "Bash (MSYS2)",
+            Shell::Msys2Zsh => "Zsh (MSYS2)",
+            Shell::Msys2Fish => "Fish (MSYS2)",
+            Shell::CygwinBash => "Bash (Cygwin)",
+            Shell::CygwinZsh => "Zsh (Cygwin)",
+            Shell::CygwinFish => "Fish (Cygwin)",
+            Shell::Wsl => "WSL distros",
         }
     }
 
@@ -109,11 +218,14 @@ impl Shell {
     fn init_name(self) -> &'static str {
         match self {
             Shell::Pwsh | Shell::WindowsPowerShell => "pwsh",
-            Shell::Bash => "bash",
-            Shell::Zsh => "zsh",
-            Shell::Fish => "fish",
+            Shell::Bash | Shell::Msys2Bash | Shell::CygwinBash | Shell::Wsl => "bash",
+            Shell::Zsh | Shell::Msys2Zsh | Shell::CygwinZsh => "zsh",
+            Shell::Fish | Shell::Msys2Fish | Shell::CygwinFish => "fish",
             Shell::Cmd => "cmd",
             Shell::Nu => "nu",
+            Shell::Elvish => "elvish",
+            Shell::Xonsh => "xonsh",
+            Shell::Yash => "yash",
         }
     }
 }
@@ -123,6 +235,8 @@ pub struct ShellStatus {
     pub shell: Shell,
     /// The file the prompt line goes in.
     pub profile: PathBuf,
+    /// Where it goes, for the window: that file, or the WSL distros.
+    pub shown: String,
     /// The prompt line is in it.
     pub configured: bool,
     /// The theme named in it, `DEFAULT_THEME` for none.
@@ -170,6 +284,12 @@ pub enum TerminalKind {
     XResources,
     /// A terminal that carries the Nerd Font icons itself (WezTerm, Ghostty): nothing to set.
     BuiltIn,
+    /// A terminal whose font cannot be written from outside it; `detail` says where to set it.
+    ByHand,
+    /// iTerm2's profiles kept in files of their own.
+    ITermDynamic,
+    /// The IDEs from JetBrains, and Android Studio.
+    JetBrains,
 }
 
 #[derive(Clone, Debug)]
@@ -376,6 +496,96 @@ fn dq(s: &str) -> String {
     format!("\"{s}\"")
 }
 
+/// The fonts each iTerm2 dynamic profile sets itself: its place in the file, the key and
+/// the font.
+fn iterm_dynamic_fonts(text: &str) -> Vec<(usize, &'static str, String)> {
+    let mut out = Vec::new();
+    for (i, open) in jsonc::objects_in(text, &["Profiles"]).into_iter().enumerate() {
+        for key in ["Normal Font", "Non Ascii Font"] {
+            if let Some(v) = jsonc::get_string_at(text, open, &[key]) {
+                out.push((i, key, v));
+            }
+        }
+    }
+    out
+}
+
+const XML_FONT_OPTION: &str = "<option name=\"FONT_FAMILY\" value=\"";
+
+/// The font in a JetBrains font settings file.
+fn xml_font(text: &str) -> Option<String> {
+    let (_, rest) = text.split_once(XML_FONT_OPTION)?;
+    rest.split_once('"').map(|(v, _)| v.to_string())
+}
+
+/// That file with the font set, or taken out for `None`, the rest left as it was. The
+/// version line tells the IDE not to migrate the file from its older settings.
+fn xml_with_font(text: &str, component: &str, font: Option<&str>) -> String {
+    let line = |f: &str| format!("    {XML_FONT_OPTION}{f}\" />");
+    if xml_font(text).is_some() {
+        let mut out: Vec<String> = Vec::new();
+        for l in text.lines() {
+            if !l.contains(XML_FONT_OPTION) {
+                out.push(l.to_string());
+            } else if let Some(f) = font {
+                out.push(line(f));
+            }
+        }
+        return out.join("\n") + "\n";
+    }
+    let Some(f) = font else {
+        return text.to_string();
+    };
+    let tag = format!("<component name=\"{component}\">");
+    match text.split_once(&tag) {
+        Some((before, after)) => format!("{before}{tag}\n{}{after}", line(f)),
+        None => format!(
+            "<application>\n  <component name=\"{component}\">\n    <option name=\"VERSION\" value=\"1\" />\n{}\n  </component>\n</application>\n",
+            line(f)
+        ),
+    }
+}
+
+/// The distros in what `wsl -l -q` prints, which is UTF-16. Container engines keep
+/// distros of their own, which are not for working in.
+fn wsl_names(text: &str) -> Vec<String> {
+    text.replace('\0', "")
+        .lines()
+        .map(|l| l.trim_matches(|c: char| c.is_whitespace() || c == '\u{feff}' || c == '\u{fffd}'))
+        .filter(|l| {
+            !l.is_empty()
+                && !["docker-desktop", "rancher-desktop", "podman-"]
+                    .iter()
+                    .any(|p| l.to_lowercase().starts_with(p))
+        })
+        .map(str::to_string)
+        .collect()
+}
+
+/// The script for a distro: with `Some(theme)` it sets the prompt up, where `None` inside
+/// is the built-in theme; with `None` it only takes the prompt out.
+fn wsl_script(setup: Option<Option<&str>>) -> String {
+    let body = match setup {
+        None => "exit 0".to_string(),
+        Some(theme) => {
+            let config = theme.map_or("''".to_string(), |t| {
+                sh_quote(&format!(" --config {}", sh_quote(t)))
+            });
+            WSL_SETUP
+                .replace("@INSTALL@", INSTALL_SH)
+                .replace("@CONFIG@", &config)
+        }
+    };
+    WSL_SCRIPT
+        .replace("@BEGIN@", BEGIN)
+        .replace("@END@", END)
+        .replace("@SETUP@", &body)
+}
+
+fn py_quote(s: &str) -> String {
+    format!("'{}'", lua_quote(s))
+}
+
 fn lua_quote(s: &str) -> String {
     s.replace('\\', "\\\\").replace('\'', "\\'")
 }
@@ -410,13 +620,25 @@ pub fn init_line(shell: Shell, os: Os, binary: &Path, theme: Option<&Path>) -> S
                 config(ps_quote)
             )
         }
-        Shell::Bash | Shell::Zsh => format!(
+        Shell::Bash
+        | Shell::Zsh
+        | Shell::Yash
+        | Shell::Msys2Bash
+        | Shell::Msys2Zsh
+        | Shell::CygwinBash
+        | Shell::CygwinZsh => format!(
             "eval \"$({} init {}{})\"",
             sh_quote(&b),
             shell.init_name(),
             config(sh_quote)
         ),
-        Shell::Fish => format!("{} init fish{} | source", sh_quote(&b), config(sh_quote)),
+        Shell::Fish | Shell::Msys2Fish | Shell::CygwinFish => {
+            format!("{} init fish{} | source", sh_quote(&b), config(sh_quote))
+        }
+        // The line that really starts it is written inside each distro by `wsl_script`.
+        Shell::Wsl => "# set in the shells of each WSL distro".to_string(),
+        Shell::Elvish => format!("eval ({} init elvish{})", ps_quote(&b), config(ps_quote)),
+        Shell::Xonsh => format!("execx($({} init xonsh{}))", py_quote(&b), config(py_quote)),
         // Prints nothing: it writes its script into Nushell's autoload folder, which
         // Nushell reads right after this file.
         Shell::Nu => format!("^{} init nu{}", dq(&b), config(dq)),
@@ -972,6 +1194,29 @@ impl Posh {
                         ],
                     ),
                 ),
+                (Shell::Zsh, self.git_shell("zsh")),
+                (Shell::Fish, self.git_shell("fish")),
+                (Shell::Msys2Bash, self.msys_program("bash.exe")),
+                (Shell::Msys2Zsh, self.msys_program("zsh.exe")),
+                (Shell::Msys2Fish, self.msys_program("fish.exe")),
+                (Shell::CygwinBash, self.cygwin_program("bash.exe")),
+                (Shell::CygwinZsh, self.cygwin_program("zsh.exe")),
+                (Shell::CygwinFish, self.cygwin_program("fish.exe")),
+                (Shell::Wsl, self.wsl_program()),
+                (
+                    Shell::Elvish,
+                    self.program("elvish", vec![home.join("scoop").join("shims").join("elvish.exe")]),
+                ),
+                (
+                    Shell::Xonsh,
+                    self.program(
+                        "xonsh",
+                        vec![
+                            home.join(".local").join("bin").join("xonsh.exe"),
+                            home.join("scoop").join("shims").join("xonsh.exe"),
+                        ],
+                    ),
+                ),
             ],
             Os::MacOs => vec![
                 (Shell::Zsh, self.program("zsh", vec!["/bin/zsh".into()])),
@@ -1012,6 +1257,34 @@ impl Posh {
                         ],
                     ),
                 ),
+                (
+                    Shell::Elvish,
+                    self.program(
+                        "elvish",
+                        vec![
+                            "/opt/homebrew/bin/elvish".into(),
+                            "/usr/local/bin/elvish".into(),
+                        ],
+                    ),
+                ),
+                (
+                    Shell::Xonsh,
+                    self.program(
+                        "xonsh",
+                        vec![
+                            "/opt/homebrew/bin/xonsh".into(),
+                            "/usr/local/bin/xonsh".into(),
+                            home.join(".local").join("bin").join("xonsh"),
+                        ],
+                    ),
+                ),
+                (
+                    Shell::Yash,
+                    self.program(
+                        "yash",
+                        vec!["/opt/homebrew/bin/yash".into(), "/usr/local/bin/yash".into()],
+                    ),
+                ),
             ],
             Os::Linux => vec![
                 (
@@ -1046,6 +1319,24 @@ impl Posh {
                             "/usr/bin/nu".into(),
                         ],
                     ),
+                ),
+                (
+                    Shell::Elvish,
+                    self.program(
+                        "elvish",
+                        vec!["/usr/bin/elvish".into(), "/usr/local/bin/elvish".into()],
+                    ),
+                ),
+                (
+                    Shell::Xonsh,
+                    self.program(
+                        "xonsh",
+                        vec!["/usr/bin/xonsh".into(), home.join(".local").join("bin").join("xonsh")],
+                    ),
+                ),
+                (
+                    Shell::Yash,
+                    self.program("yash", vec!["/usr/bin/yash".into(), "/usr/local/bin/yash".into()]),
                 ),
             ],
         }
@@ -1096,7 +1387,150 @@ impl Posh {
             Shell::Nu => asked(&["-c", "$nu.config-path"]).unwrap_or_else(|| {
                 self.nu_config_dir(&home).join("config.nu")
             }),
+            Shell::Elvish => self.elvish_rc(&home),
+            Shell::Xonsh => home.join(".xonshrc"),
+            Shell::Msys2Bash => self.msys_home().join(".bashrc"),
+            Shell::Msys2Zsh => self.msys_home().join(".zshrc"),
+            Shell::Msys2Fish => self.msys_home().join(".config").join("fish").join("config.fish"),
+            Shell::CygwinBash => self.cygwin_home().join(".bashrc"),
+            Shell::CygwinZsh => self.cygwin_home().join(".zshrc"),
+            Shell::CygwinFish => self.cygwin_home().join(".config").join("fish").join("config.fish"),
+            // A record of the block; the shells inside the distros hold the real thing.
+            Shell::Wsl => self.ws.app_dir().join(WSL_RECORD),
+            Shell::Yash => home.join(".yashrc"),
         }
+    }
+
+    /// A shell added to Git for Windows, which shares Git Bash's home.
+    fn git_shell(&self, name: &str) -> Option<PathBuf> {
+        let exe = format!("{name}.exe");
+        self.first_existing(vec![
+            self.program_files().join("Git").join("usr").join("bin").join(&exe),
+            self.local_app_data().join("Programs").join("Git").join("usr").join("bin").join(&exe),
+        ])
+        .or_else(|| {
+            self.ws.find_program(name).filter(|p| {
+                let p = p.display().to_string().to_lowercase();
+                !p.contains("msys") && !p.contains("cygwin")
+            })
+        })
+    }
+
+    fn msys_root(&self) -> Option<PathBuf> {
+        [PathBuf::from(r"C:\msys64"), PathBuf::from(r"C:\msys32")]
+            .into_iter()
+            .find(|r| self.ws.exists(&r.join("usr").join("bin").join("bash.exe")))
+    }
+
+    fn cygwin_root(&self) -> Option<PathBuf> {
+        [PathBuf::from(r"C:\cygwin64"), PathBuf::from(r"C:\cygwin")]
+            .into_iter()
+            .find(|r| self.ws.exists(&r.join("bin").join("bash.exe")))
+    }
+
+    fn msys_program(&self, exe: &str) -> Option<PathBuf> {
+        let file = self.msys_root()?.join("usr").join("bin").join(exe);
+        self.ws.exists(&file).then_some(file)
+    }
+
+    fn cygwin_program(&self, exe: &str) -> Option<PathBuf> {
+        let file = self.cygwin_root()?.join("bin").join(exe);
+        self.ws.exists(&file).then_some(file)
+    }
+
+    fn windows_user(&self) -> String {
+        self.ws
+            .env("USERNAME")
+            .filter(|u| !u.is_empty())
+            .or_else(|| self.home().file_name().map(|n| n.to_string_lossy().into_owned()))
+            .unwrap_or_default()
+    }
+
+    fn msys_home(&self) -> PathBuf {
+        self.msys_root()
+            .map_or_else(|| self.home(), |r| r.join("home").join(self.windows_user()))
+    }
+
+    fn cygwin_home(&self) -> PathBuf {
+        self.cygwin_root()
+            .map_or_else(|| self.home(), |r| r.join("home").join(self.windows_user()))
+    }
+
+    // ---- WSL ----
+
+    /// `wsl.exe`, when there is a distro for it to run.
+    fn wsl_program(&self) -> Option<PathBuf> {
+        let wsl = self.ws.find_program("wsl")?;
+        (!self.wsl_distros(&wsl).is_empty()).then_some(wsl)
+    }
+
+    /// The distros a person works in. Listing them does not start any.
+    fn wsl_distros(&self, wsl: &Path) -> Vec<String> {
+        let r = self.run(wsl, &["-l", "-q"]);
+        if r.success {
+            wsl_names(&r.stdout)
+        } else {
+            Vec::new()
+        }
+    }
+
+    /// A Windows path as this distro sees it.
+    fn wsl_path(&self, wsl: &Path, distro: &str, path: &Path) -> Option<String> {
+        let windows = path.display().to_string().replace('\\', "/");
+        self.ask(wsl, &["-d", distro, "-e", "wslpath", "-a", &windows])
+    }
+
+    /// Runs one script in every distro, from a file in this program's folder that each
+    /// can read. `make` gets the distro's view of the theme.
+    fn wsl_each(
+        &self,
+        wsl: &Path,
+        theme: Option<&Path>,
+        make: impl Fn(Option<&str>) -> String,
+        log: &mut Vec<String>,
+    ) -> bool {
+        let file = self.ws.app_dir().join(WSL_SCRIPT_FILE);
+        let mut any = false;
+        for distro in self.wsl_distros(wsl) {
+            log.push(format!("{distro}: working in this WSL distro..."));
+            let Some(script) = self.wsl_path(wsl, &distro, &file) else {
+                log.push(format!("{distro}: could not be started; left alone."));
+                continue;
+            };
+            let unix_theme = theme.and_then(|t| self.wsl_path(wsl, &distro, t));
+            if theme.is_some() && unix_theme.is_none() {
+                log.push(format!("{distro}: the theme could not be reached; left alone."));
+                continue;
+            }
+            if let Err(e) = self.ws.write_text(&file, &make(unix_theme.as_deref())) {
+                log.push(format!("{distro}: not changed: {e}."));
+                continue;
+            }
+            let r = self.run(wsl, &["-d", &distro, "-e", "sh", &script]);
+            log.extend(tail(&r));
+            if r.success {
+                any = true;
+            } else {
+                log.push(format!("{distro}: not finished. Check the lines above."));
+            }
+        }
+        self.ws.remove_file(&file);
+        any
+    }
+
+    /// Where Elvish reads its start-up file, in the order its documentation gives.
+    fn elvish_rc(&self, home: &Path) -> PathBuf {
+        let legacy = home.join(".elvish").join("rc.elv");
+        if self.ws.exists(&legacy) {
+            return legacy;
+        }
+        self.env_dir("XDG_CONFIG_HOME")
+            .unwrap_or_else(|| match self.os() {
+                Os::Windows => self.app_data(),
+                _ => self.config_home(),
+            })
+            .join("elvish")
+            .join("rc.elv")
     }
 
     fn nu_config_dir(&self, home: &Path) -> PathBuf {
@@ -1161,8 +1595,14 @@ impl Posh {
             Shell::Nu => self.nu_blocker(program),
             _ => None,
         };
+        let shown = if shell == Shell::Wsl {
+            self.wsl_distros(program).join(", ")
+        } else {
+            profile.display().to_string()
+        };
         ShellStatus {
             shell,
+            shown,
             profile,
             configured: body.is_some(),
             theme: body.and_then(|b| theme_in(b, shell.comment())),
@@ -1301,11 +1741,18 @@ impl Posh {
                 self.windows_terminals(&mut out);
                 out.push(self.console_terminal());
                 self.windows_more_terminals(&mut out);
+                if self.ws.exists(&self.local_app_data().join("Microsoft").join("VisualStudio")) {
+                    out.push(by_hand(
+                        "Visual Studio",
+                        "set it in Tools > Options > Environment > Fonts and Colors > Terminal",
+                    ));
+                }
             }
             Os::MacOs => self.mac_terminals(&mut out),
             Os::Linux => self.linux_terminals(&mut out),
         }
         self.shared_terminals(&mut out);
+        self.jetbrains_terminal(&mut out);
         out
     }
 
@@ -1316,8 +1763,14 @@ impl Posh {
             ("Code - Insiders", "VS Code Insiders"),
             ("Code - OSS", "Code - OSS"),
             ("VSCodium", "VSCodium"),
+            ("VSCodium - Insiders", "VSCodium Insiders"),
             ("Cursor", "Cursor"),
             ("Windsurf", "Windsurf"),
+            ("Trae", "Trae"),
+            ("Kiro", "Kiro"),
+            ("Antigravity", "Antigravity"),
+            ("Positron", "Positron"),
+            ("Void", "Void"),
         ];
         for (folder, name) in editors {
             let user = match self.os() {
@@ -1329,16 +1782,41 @@ impl Posh {
                     .join("User"),
                 Os::Linux => self.config_home().join(folder).join("User"),
             };
-            if !self.ws.exists(&user) {
-                continue;
+            self.push_vscode(out, name, &user);
+        }
+        if self.os() == Os::Linux {
+            let flatpak = home.join(".var").join("app");
+            let snap = home.join("snap");
+            let packaged = [
+                ("VS Code (Flatpak)", flatpak.join("com.visualstudio.code").join("config").join("Code")),
+                ("VSCodium (Flatpak)", flatpak.join("com.vscodium.codium").join("config").join("VSCodium")),
+                ("VS Code (Snap)", snap.join("code").join("current").join(".config").join("Code")),
+                ("VSCodium (Snap)", snap.join("codium").join("current").join(".config").join("VSCodium")),
+            ];
+            for (name, dir) in packaged {
+                self.push_vscode(out, name, &dir.join("User"));
             }
-            let settings = user.join("settings.json");
+        }
+        self.vscode_portable(out);
+    }
+
+    /// An editor's default settings, then each of its named profiles, which keep settings
+    /// of their own.
+    fn push_vscode(&self, out: &mut Vec<TerminalStatus>, name: &str, user: &Path) {
+        if !self.ws.exists(user) {
+            return;
+        }
+        let mut files = vec![(name.to_string(), user.join("settings.json"))];
+        for (profile, settings) in self.vscode_profiles(user) {
+            files.push((format!("{name}: {profile}"), settings));
+        }
+        for (name, settings) in files {
             let text = self.ws.read_text(&settings).unwrap_or_default();
             let font = jsonc::get_string(&text, &[VSCODE_FONT]).is_some_and(|f| is_nerd_font(&f));
             let contrast =
                 jsonc::get_raw(&text, &[VSCODE_CONTRAST]).is_some_and(|v| v.trim() == "1");
             out.push(TerminalStatus {
-                name: name.into(),
+                name,
                 kind: TerminalKind::VsCode,
                 target: settings.display().to_string(),
                 font_set: font && contrast,
@@ -1351,6 +1829,67 @@ impl Posh {
         }
     }
 
+    /// The named profiles in an editor's `User` folder, with the name the person gave each
+    /// and its settings file. That file may not exist yet.
+    fn vscode_profiles(&self, user: &Path) -> Vec<(String, PathBuf)> {
+        let base = user.join("profiles");
+        let mut dirs: Vec<PathBuf> = self
+            .ws
+            .list_files(&base, 2)
+            .iter()
+            .filter_map(|f| f.parent().map(Path::to_path_buf))
+            .filter(|d| *d != base)
+            .collect();
+        dirs.sort();
+        dirs.dedup();
+        let storage = self
+            .ws
+            .read_text(&user.join("globalStorage").join("storage.json"))
+            .unwrap_or_default();
+        let names: Vec<(String, String)> = jsonc::objects_in(&storage, &["userDataProfiles"])
+            .into_iter()
+            .filter_map(|o| {
+                Some((
+                    jsonc::get_string_at(&storage, o, &["location"])?,
+                    jsonc::get_string_at(&storage, o, &["name"])?,
+                ))
+            })
+            .collect();
+        dirs.into_iter()
+            .map(|d| {
+                let id = d
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_default();
+                let label = names
+                    .iter()
+                    .find(|(location, _)| *location == id)
+                    .map_or(id.clone(), |(_, name)| name.clone());
+                (label, d.join("settings.json"))
+            })
+            .collect()
+    }
+
+    /// VS Code and VSCodium unpacked somewhere with a `data` folder beside them.
+    fn vscode_portable(&self, out: &mut Vec<TerminalStatus>) {
+        let portable = |root: PathBuf| root.join("data").join("user-data").join("User");
+        for (program, name) in [("code", "VS Code (portable)"), ("codium", "VSCodium (portable)")] {
+            let root = self
+                .ws
+                .find_program(program)
+                .and_then(|p| p.parent()?.parent().map(Path::to_path_buf));
+            if let Some(root) = root {
+                self.push_vscode(out, name, &portable(root));
+            }
+        }
+        if self.os() == Os::MacOs {
+            for dir in [PathBuf::from("/Applications"), self.home().join("Applications")] {
+                let user = dir.join("code-portable-data").join("user-data").join("User");
+                self.push_vscode(out, "VS Code (portable)", &user);
+            }
+        }
+    }
+
     fn windows_terminals(&self, out: &mut Vec<TerminalStatus>) {
         let packages = self.local_app_data().join("Packages");
         let store = |package: &str| {
@@ -1359,7 +1898,7 @@ impl Posh {
                 .join("LocalState")
                 .join("settings.json")
         };
-        let candidates = [
+        let mut candidates = vec![
             ("Windows Terminal", store("Microsoft.WindowsTerminal")),
             (
                 "Windows Terminal Preview",
@@ -1376,7 +1915,28 @@ impl Posh {
                     .join("Windows Terminal")
                     .join("settings.json"),
             ),
+            (
+                "Windows Terminal (Scoop)",
+                self.home()
+                    .join("scoop")
+                    .join("apps")
+                    .join("windows-terminal")
+                    .join("current")
+                    .join("settings")
+                    .join("settings.json"),
+            ),
         ];
+        let unpacked = self
+            .ws
+            .find_program("WindowsTerminal")
+            .or_else(|| self.ws.find_program("wt"))
+            .and_then(|p| p.parent().map(Path::to_path_buf));
+        if let Some(dir) = unpacked.filter(|d| self.ws.exists(&d.join(".portable"))) {
+            candidates.push((
+                "Windows Terminal (portable)",
+                dir.join("settings").join("settings.json"),
+            ));
+        }
         for (name, settings) in candidates {
             if !self.ws.exists(&settings) {
                 continue;
@@ -1490,6 +2050,7 @@ impl Posh {
                 detail: profiles_text(fonts.len()),
             });
         }
+        self.iterm_dynamic_terminal(out);
     }
 
     fn linux_terminals(&self, out: &mut Vec<TerminalStatus>) {
@@ -1521,6 +2082,7 @@ impl Posh {
         if self.ws.exists(&self.konsolerc())
             || self.ws.exists(&konsole_dir)
             || self.ws.find_program("konsole").is_some()
+            || self.ws.find_program("yakuake").is_some()
         {
             let profiles = self.konsole_profiles();
             let all = !profiles.is_empty()
@@ -1848,6 +2410,34 @@ impl Posh {
             found("deepin-terminal"),
         );
         self.push_file(out, "foot", config.join("foot").join("foot.ini"), found("foot"));
+        // Tilda has a settings file for each window it runs.
+        let tilda_dir = config.join("tilda");
+        let mut tildas: Vec<PathBuf> = self
+            .ws
+            .list_files(&tilda_dir, 1)
+            .into_iter()
+            .filter(|f| f.file_name().is_some_and(|n| n.to_string_lossy().starts_with("config_")))
+            .collect();
+        tildas.sort();
+        if tildas.is_empty() && found("tilda") {
+            tildas.push(tilda_dir.join("config_0"));
+        }
+        for (i, file) in tildas.into_iter().enumerate() {
+            let name = if i == 0 { "Tilda".to_string() } else { format!("Tilda #{}", i + 1) };
+            self.push_file(out, &name, file, true);
+        }
+        self.push_file(
+            out,
+            "COSMIC Terminal",
+            config.join("cosmic").join("com.system76.CosmicTerm").join("v1").join("font_name"),
+            found("cosmic-term"),
+        );
+        if found("terminology") || self.ws.exists(&config.join("terminology")) {
+            out.push(by_hand("Terminology", "set it in its own settings, under Font"));
+        }
+        if found("st") {
+            out.push(by_hand("st", "its font is chosen when it is compiled, in config.h"));
+        }
         // xterm and urxvt read X resources from the file already there.
         let xres = self.xresources();
         for (name, key) in [("xterm", "faceName"), ("urxvt", "font")] {
@@ -2656,8 +3246,17 @@ impl Posh {
                     log.push(format!("{}: has the icons built in; nothing to set.", t.name));
                     false
                 }
+                TerminalKind::ByHand => {
+                    log.push(format!("{}: {}.", t.name, t.detail));
+                    false
+                }
+                TerminalKind::ITermDynamic => self.iterm_dynamic_apply(&mut changes, log),
+                TerminalKind::JetBrains => self.jetbrains_apply(&mut changes, log),
             };
             any |= ok;
+        }
+        if self.os() == Os::Windows {
+            any |= self.shortcuts_apply(&mut changes, log);
         }
         self.undo_save(&changes.list);
         if !any {
@@ -3496,6 +4095,10 @@ impl Posh {
                 "tabby" => self.yaml_restore("Tabby", &entries, log),
                 "terminal.app" => self.apple_terminal_restore(&entries, log),
                 "iterm2" => self.iterm_restore(&entries, log),
+                "iterm-dyn" => self.iterm_dynamic_restore(&entries, log),
+                "jetbrains" => self.jetbrains_restore(&entries, log),
+                "lnk" => self.shortcuts_restore(&entries, log),
+                "whole" => self.shape_restore(Shape::Whole, &entries, log),
                 "font-file" => {
                     if fonts_too {
                         self.remove_font_files(&entries, log)
@@ -3513,6 +4116,232 @@ impl Posh {
         }
         self.undo_save(&keep);
         all_ok
+    }
+
+    // ---- iTerm2's dynamic profiles ----
+
+    fn iterm_dynamic_dir(&self) -> PathBuf {
+        self.home()
+            .join("Library")
+            .join("Application Support")
+            .join("iTerm2")
+            .join("DynamicProfiles")
+    }
+
+    /// One row for the lot. A profile with no font of its own inherits one from a profile
+    /// that has been set already.
+    fn iterm_dynamic_terminal(&self, out: &mut Vec<TerminalStatus>) {
+        let dir = self.iterm_dynamic_dir();
+        let files = self.ws.list_files(&dir, 1);
+        if files.is_empty() {
+            return;
+        }
+        let (mut profiles, mut all) = (0, true);
+        for f in &files {
+            let text = self.ws.read_text(f).unwrap_or_default();
+            profiles += jsonc::objects_in(&text, &["Profiles"]).len();
+            all &= iterm_dynamic_fonts(&text).iter().all(|(_, _, v)| is_nerd_font(v));
+        }
+        out.push(TerminalStatus {
+            name: "iTerm2 Dynamic Profiles".into(),
+            kind: TerminalKind::ITermDynamic,
+            target: dir.display().to_string(),
+            font_set: all,
+            detail: profiles_text(profiles),
+        });
+    }
+
+    fn iterm_dynamic_apply(&self, changes: &mut Changes, log: &mut Vec<String>) -> bool {
+        let mut any = false;
+        for file in self.ws.list_files(&self.iterm_dynamic_dir(), 1) {
+            let Some(text) = self.ws.read_text(&file).filter(|t| t.trim_start().starts_with('{')) else {
+                log.push(format!("iTerm2: {} is not JSON; left alone.", file.display()));
+                continue;
+            };
+            let target = format!("iterm-dyn:{}", file.display());
+            let mut new = text.clone();
+            let fonts = iterm_dynamic_fonts(&text);
+            for (index, key, value) in &fonts {
+                changes.remember(&target, &format!("{index}/{key}"), Some(jsonc::quoted(value)));
+                let font = format!("{FONT_MONO_POSTSCRIPT} {}", font_size_of(value));
+                let open = jsonc::objects_in(&new, &["Profiles"])[*index];
+                match jsonc::set_raw_at(&new, open, &[*key], &jsonc::quoted(&font)) {
+                    Ok(n) => new = n,
+                    Err(e) => log.push(format!("iTerm2: {} not changed: {e}.", file.display())),
+                }
+            }
+            if !fonts.is_empty() && self.write_settings("iTerm2", &file, &new, log) {
+                log.push(format!("iTerm2: font set in {}.", file.display()));
+                any = true;
+            }
+        }
+        any
+    }
+
+    fn iterm_dynamic_restore(&self, entries: &[&Undo], log: &mut Vec<String>) -> bool {
+        let mut ok = true;
+        for (file, list) in Self::by_target(entries) {
+            let path = PathBuf::from(&file);
+            let Some(mut text) = self.ws.read_text(&path) else {
+                continue;
+            };
+            for u in list.iter().rev() {
+                let (Some((index, key)), Some(before)) = (u.key.split_once('/'), &u.before) else {
+                    continue;
+                };
+                let open = index
+                    .parse::<usize>()
+                    .ok()
+                    .and_then(|i| jsonc::objects_in(&text, &["Profiles"]).get(i).copied());
+                if let Some(open) = open {
+                    if let Ok(n) = jsonc::set_raw_at(&text, open, &[key], before) {
+                        text = n;
+                    }
+                }
+            }
+            ok &= self.ws.write_text(&path, &text).is_ok();
+            log.push(format!("iTerm2: fonts put back in {file}."));
+        }
+        ok
+    }
+
+    // ---- JetBrains IDEs ----
+
+    /// The `options` folder of each IDE version, and Android Studio's.
+    fn jetbrains_options(&self) -> Vec<PathBuf> {
+        let base = match self.os() {
+            Os::Windows => self.app_data(),
+            Os::MacOs => self.home().join("Library").join("Application Support"),
+            Os::Linux => self.config_home(),
+        };
+        let mut dirs: Vec<PathBuf> = Vec::new();
+        for (vendor, prefix) in [("JetBrains", ""), ("Google", "AndroidStudio")] {
+            let root = base.join(vendor);
+            for f in self.ws.list_files(&root, 3) {
+                let Some(options) = f.parent().filter(|d| d.ends_with("options")) else {
+                    continue;
+                };
+                let product = options.parent();
+                if product.and_then(Path::parent) == Some(root.as_path())
+                    && product
+                        .and_then(Path::file_name)
+                        .is_some_and(|n| n.to_string_lossy().starts_with(prefix))
+                {
+                    dirs.push(options.to_path_buf());
+                }
+            }
+        }
+        dirs.sort();
+        dirs.dedup();
+        dirs
+    }
+
+    fn jetbrains_terminal(&self, out: &mut Vec<TerminalStatus>) {
+        let dirs = self.jetbrains_options();
+        if dirs.is_empty() {
+            return;
+        }
+        let all = dirs.iter().all(|d| {
+            let text = self.ws.read_text(&d.join(JETBRAINS_FONTS[0].0)).unwrap_or_default();
+            xml_font(&text).is_some_and(|f| is_nerd_font(&f))
+        });
+        out.push(TerminalStatus {
+            name: "JetBrains IDEs".into(),
+            kind: TerminalKind::JetBrains,
+            target: String::new(),
+            font_set: all,
+            detail: if dirs.len() == 1 { "1 IDE".into() } else { format!("{} IDEs", dirs.len()) },
+        });
+    }
+
+    fn jetbrains_apply(&self, changes: &mut Changes, log: &mut Vec<String>) -> bool {
+        let mut any = false;
+        for dir in self.jetbrains_options() {
+            for (file, component) in JETBRAINS_FONTS {
+                let path = dir.join(file);
+                let Some(text) = self.settings_text("JetBrains", &path, log) else {
+                    continue;
+                };
+                changes.remember(&format!("jetbrains:{}", path.display()), component, xml_font(&text));
+                let new = xml_with_font(&text, component, Some(FONT_MONO));
+                any |= self.write_settings("JetBrains", &path, &new, log);
+            }
+        }
+        if any {
+            log.push(format!(
+                "JetBrains IDEs: terminal font set to {FONT_MONO}. Close them first if they were open: they save their own settings on exit."
+            ));
+        }
+        any
+    }
+
+    fn jetbrains_restore(&self, entries: &[&Undo], log: &mut Vec<String>) -> bool {
+        let mut ok = true;
+        for (file, list) in Self::by_target(entries) {
+            let path = PathBuf::from(&file);
+            let Some(text) = self.ws.read_text(&path) else {
+                continue;
+            };
+            let Some(u) = list.first() else {
+                continue;
+            };
+            let new = xml_with_font(&text, &u.key, u.before.as_deref());
+            if u.before.is_none() && !new.contains("FONT_") {
+                self.ws.remove_file(&path); // only this program's setting was in it
+            } else {
+                ok &= self.ws.write_text(&path, &new).is_ok();
+            }
+        }
+        log.push("JetBrains IDEs: font settings put back.".into());
+        ok
+    }
+
+    // ---- Windows shortcuts ----
+
+    /// Start Menu, desktop and taskbar shortcuts can carry a console font of their own, which
+    /// beats the registry. Slow, so it is looked at only when the fonts are being set.
+    fn shortcuts_apply(&self, changes: &mut Changes, log: &mut Vec<String>) -> bool {
+        let Some(ps) = self.powershell() else {
+            return false;
+        };
+        let script = SHORTCUT_APPLY.replace("@FONT@", FONT_MONO);
+        let r = self.run(&ps, &["-NoProfile", "-NonInteractive", "-Command", &script]);
+        let mut n = 0;
+        for line in r.stdout.lines() {
+            let mut parts = line.trim().split('\t');
+            let (Some(file), Some(face), Some(family)) = (parts.next(), parts.next(), parts.next()) else {
+                continue;
+            };
+            changes.remember(&format!("lnk:{file}"), "FaceName", Some(format!("{face}|{family}")));
+            n += 1;
+        }
+        if n > 0 {
+            log.push(format!("Shortcuts with a console font of their own: {n} set to {FONT_MONO}."));
+        }
+        n > 0
+    }
+
+    fn shortcuts_restore(&self, entries: &[&Undo], log: &mut Vec<String>) -> bool {
+        let Some(ps) = self.powershell() else {
+            return false;
+        };
+        let rows: Vec<String> = entries
+            .iter()
+            .filter_map(|u| {
+                let (face, family) = u.before.as_deref()?.split_once('|')?;
+                let file = u.target.split_once(':')?.1;
+                Some(format!(
+                    "Set-ShortcutFont {} {} {}",
+                    ps_quote(file),
+                    ps_quote(face),
+                    family.parse::<u32>().ok()?
+                ))
+            })
+            .collect();
+        let script = SHORTCUT_RESTORE.replace("@ROWS@", &rows.join("\n"));
+        let r = self.run(&ps, &["-NoProfile", "-NonInteractive", "-Command", &script]);
+        log.push(format!("Shortcuts: console fonts put back in {}.", rows.len()));
+        r.success
     }
 
     /// Entries grouped by what they belong to, in the order first seen.
@@ -3743,7 +4572,7 @@ impl Posh {
                     }
                 }
             }
-            if shape == Shape::Kv && new.trim().is_empty() {
+            if matches!(shape, Shape::Kv | Shape::Whole) && new.trim().is_empty() {
                 self.ws.remove_file(&path); // a file this program made for the font alone
             } else {
                 ok &= self.ws.write_text(&path, &new).is_ok();
@@ -4035,6 +4864,17 @@ impl Posh {
                 theme.unwrap_or(DEFAULT_THEME),
                 init_line(shell, os, &binary, theme_file.as_deref())
             );
+            if shell == Shell::Wsl {
+                let done_here = self.wsl_each(
+                    &program,
+                    theme_file.as_deref(),
+                    |theme| wsl_script(Some(theme)),
+                    log,
+                );
+                if !done_here {
+                    continue;
+                }
+            }
             let mut text = with_block(existing.as_deref().unwrap_or(""), shell.comment(), &body);
             // A byte-order mark, so Windows PowerShell reads a new profile as UTF-8.
             if existing.is_none() && matches!(shell, Shell::Pwsh | Shell::WindowsPowerShell) {
@@ -4077,8 +4917,9 @@ impl Posh {
         let clink = (self.os() == Os::Windows)
             .then(|| self.find_clink())
             .flatten();
-        let mut files: Vec<(String, PathBuf, &str)> = self
-            .shells(clink.as_deref())
+        let shells = self.shells(clink.as_deref());
+        let wsl_set = shells.iter().any(|s| s.shell == Shell::Wsl && s.configured);
+        let mut files: Vec<(String, PathBuf, &str)> = shells
             .into_iter()
             .map(|s| (s.shell.name().to_string(), s.profile, s.shell.comment()))
             .collect();
@@ -4097,6 +4938,13 @@ impl Posh {
                     log.push(format!("{name}: prompt removed from {}.", path.display()));
                 }
                 Err(e) => log.push(format!("{name}: could not write {}: {e}.", path.display())),
+            }
+        }
+        if wsl_set {
+            if let Some(wsl) = self.wsl_program() {
+                if self.wsl_each(&wsl, None, |_| wsl_script(None), log) {
+                    log.push("WSL: the prompt is out; Oh My Posh stays in ~/.local/bin of each distro.".into());
+                }
             }
         }
         // What `oh-my-posh init nu` wrote for Nushell to load at start-up.
@@ -4131,6 +4979,16 @@ fn undo_kind(target: &str) -> &str {
 }
 
 /// A terminal that needs nothing done.
+fn by_hand(name: &str, how: &str) -> TerminalStatus {
+    TerminalStatus {
+        name: name.into(),
+        kind: TerminalKind::ByHand,
+        target: String::new(),
+        font_set: false,
+        detail: how.into(),
+    }
+}
+
 fn built_in(name: &str) -> TerminalStatus {
     TerminalStatus {
         name: name.into(),
@@ -4227,6 +5085,11 @@ const GS_RECIPES: &[GsRecipe] = &[
         program: "io.elementary.terminal",
         settings: &[("io.elementary.terminal.settings", "font", Form::NameSize)],
     },
+    GsRecipe {
+        name: "Black Box",
+        program: "blackbox",
+        settings: &[("com.raggesilver.BlackBox", "font", Form::NameSize)],
+    },
 ];
 
 fn gs_recipe(name: &str) -> Option<&'static GsRecipe> {
@@ -4248,6 +5111,10 @@ enum Form {
     Fontconfig,
     /// `"MesloLGM Nerd Font"`: a TOML or JSON string.
     Quoted,
+    /// `"MesloLGM Nerd Font Mono"`, for a program that lists only fixed-pitch fonts.
+    QuotedMono,
+    /// `"MesloLGM Nerd Font 11"`: a font description in a quoted string.
+    QuotedNameSize,
     /// A fixed value that goes with the font, such as `false` for "use the system font".
     Literal(&'static str),
 }
@@ -4260,6 +5127,8 @@ impl Form {
             Form::NameSize => format!("{FONT_NAME} 11"),
             Form::Fontconfig => format!("{FONT_NAME}:size=11"),
             Form::Quoted => format!("\"{FONT_NAME}\""),
+            Form::QuotedMono => format!("\"{FONT_MONO}\""),
+            Form::QuotedNameSize => format!("\"{FONT_NAME} 11\""),
             Form::Literal(v) => v.into(),
         }
     }
@@ -4280,6 +5149,8 @@ enum Shape {
     Kv,
     Toml,
     Json,
+    /// One value and nothing else in the file (COSMIC's settings).
+    Whole,
 }
 
 impl Shape {
@@ -4290,6 +5161,7 @@ impl Shape {
             Shape::Kv => "kv",
             Shape::Toml => "toml",
             Shape::Json => "json",
+            Shape::Whole => "whole",
         }
     }
 }
@@ -4305,6 +5177,20 @@ struct Recipe {
 }
 
 const RECIPES: &[Recipe] = &[
+    Recipe {
+        name: "Tilda",
+        shape: Shape::Kv,
+        section: "",
+        keys: &[("font", Form::QuotedNameSize)],
+        removes: &[],
+    },
+    Recipe {
+        name: "COSMIC Terminal",
+        shape: Shape::Whole,
+        section: "",
+        keys: &[("font_name", Form::QuotedMono)],
+        removes: &[],
+    },
     Recipe {
         name: "LXTerminal",
         shape: Shape::Ini,
@@ -4406,6 +5292,8 @@ const RECIPES: &[Recipe] = &[
 ];
 
 fn recipe(name: &str) -> Option<&'static Recipe> {
+    // "Tilda #2" is another window of Tilda.
+    let name = name.split(" #").next().unwrap_or(name);
     RECIPES.iter().find(|r| r.name == name)
 }
 
@@ -4432,6 +5320,7 @@ fn shape_get(shape: Shape, text: &str, section: &str, key: &str) -> Option<Strin
         Shape::Kv => kv_get(text, key),
         Shape::Toml => toml_get(text, section, key),
         Shape::Json => jsonc::get_raw(text, &json_path(section, key)),
+        Shape::Whole => Some(text.trim().to_string()).filter(|v| !v.is_empty()),
     }
 }
 
@@ -4450,6 +5339,7 @@ fn shape_set(
         (Shape::Toml, v) => toml_set(text, section, key, v),
         (Shape::Json, Some(v)) => jsonc::set_raw(text, &json_path(section, key), v)?,
         (Shape::Json, None) => jsonc::remove(text, &json_path(section, key))?,
+        (Shape::Whole, v) => v.map_or(String::new(), |v| format!("{v}\n")),
     })
 }
 
@@ -5799,12 +6689,15 @@ mod tests {
                 .retain(|k, _| !k.starts_with(path));
             Ok(())
         }
-        fn list_files(&self, dir: &Path, _depth: u32) -> Vec<PathBuf> {
+        fn list_files(&self, dir: &Path, depth: u32) -> Vec<PathBuf> {
             self.files
                 .lock()
                 .unwrap()
                 .keys()
-                .filter(|k| k.parent() == Some(dir))
+                .filter(|k| {
+                    k.strip_prefix(dir)
+                        .is_ok_and(|r| (1..=depth as usize).contains(&r.components().count()))
+                })
                 .cloned()
                 .collect()
         }
@@ -7114,6 +8007,253 @@ mod tests {
     }
 
     #[test]
+    fn the_other_documented_shells_get_the_documented_line() {
+        let b = Path::new("/usr/bin/oh-my-posh");
+        let t = Path::new("/t/x.omp.json");
+        assert_eq!(
+            init_line(Shell::Elvish, Os::Linux, b, Some(t)),
+            "eval ('/usr/bin/oh-my-posh' init elvish --config '/t/x.omp.json')"
+        );
+        assert_eq!(
+            init_line(Shell::Xonsh, Os::Linux, b, Some(t)),
+            "execx($('/usr/bin/oh-my-posh' init xonsh --config '/t/x.omp.json'))"
+        );
+        assert_eq!(
+            init_line(Shell::Yash, Os::Linux, b, None),
+            "eval \"$('/usr/bin/oh-my-posh' init yash)\""
+        );
+    }
+
+    #[test]
+    fn elvish_xonsh_and_yash_are_found_set_up_and_cleared() {
+        let mut f = linux_box();
+        for name in ["elvish", "xonsh", "yash"] {
+            let path = format!("/usr/bin/{name}");
+            f.file(&path, "");
+            f.program(name, &path);
+        }
+        f.file("/home/ann/.elvish/rc.elv", "use re\n");
+        let fake = Arc::new(f);
+        let posh = Posh::new(fake.clone());
+        let done = posh.perform(&Task::Apply {
+            theme: None,
+            shells: vec![Shell::Elvish, Shell::Xonsh, Shell::Yash],
+        });
+        assert!(done.ok, "{:?}", done.log);
+        assert!(fake.text("/home/ann/.elvish/rc.elv").contains("init elvish"));
+        assert!(fake.text("/home/ann/.elvish/rc.elv").starts_with("use re"));
+        assert!(fake.text("/home/ann/.xonshrc").contains("init xonsh"));
+        assert!(fake.text("/home/ann/.yashrc").contains("init yash"));
+        let set = |s: Shell| done.status.shells.iter().find(|x| x.shell == s).unwrap().configured;
+        assert!(set(Shell::Elvish) && set(Shell::Xonsh) && set(Shell::Yash));
+        let done = posh.perform(&Task::Remove);
+        assert!(done.ok, "{:?}", done.log);
+        assert_eq!(fake.text("/home/ann/.elvish/rc.elv"), "use re\n");
+        assert!(!fake.text("/home/ann/.xonshrc").contains("init xonsh"));
+    }
+
+    #[test]
+    fn elvish_uses_the_modern_place_without_a_legacy_file() {
+        let posh = Posh::new(Arc::new(linux_box()));
+        assert_eq!(
+            posh.elvish_rc(Path::new("/home/ann")),
+            PathBuf::from("/home/ann/.config/elvish/rc.elv")
+        );
+    }
+
+    #[test]
+    fn each_editor_profile_is_listed_set_and_put_back() {
+        let user = "/home/ann/.config/Code/User";
+        let f = linux_box();
+        f.file(&format!("{user}/settings.json"), "{}\n");
+        // One profile with settings of its own, one that has not written any yet.
+        let work = format!("{user}/profiles/1a2b/settings.json");
+        f.file(&work, "{\n    \"a\": 1\n}\n");
+        f.file(&format!("{user}/profiles/3c4d/extensions.json"), "[]");
+        f.file(
+            &format!("{user}/globalStorage/storage.json"),
+            "{ \"userDataProfiles\": [ { \"location\": \"1a2b\", \"name\": \"Work\" } ] }",
+        );
+        f.file("/home/ann/.var/app/com.vscodium.codium/config/VSCodium/User/settings.json", "{}\n");
+        let fake = Arc::new(f);
+        let posh = Posh::new(fake.clone());
+        let names: Vec<String> = posh
+            .status()
+            .terminals
+            .into_iter()
+            .filter(|t| t.kind == TerminalKind::VsCode)
+            .map(|t| t.name)
+            .collect();
+        assert_eq!(names, ["VS Code", "VS Code: Work", "VS Code: 3c4d", "VSCodium (Flatpak)"]);
+        let done = posh.perform(&Task::SetTerminalFonts);
+        assert!(done.ok, "{:?}", done.log);
+        for file in [work.clone(), format!("{user}/profiles/3c4d/settings.json")] {
+            assert!(fake.text(&file).contains(FONT_NAME), "{file}");
+        }
+        assert!(done.status.terminals.iter().filter(|t| t.kind == TerminalKind::VsCode).all(|t| t.font_set));
+        let done = posh.perform(&Task::RestoreTerminalFonts);
+        assert!(done.ok, "{:?}", done.log);
+        assert!(!fake.text(&work).contains(FONT_NAME));
+        assert!(fake.text(&work).contains("\"a\": 1"));
+    }
+
+    #[test]
+    fn wsl_lists_the_distros_people_work_in() {
+        let raw = "\u{fffd}\u{fffd}U\0b\0u\0n\0t\0u\0\r\0\n\0d\0o\0c\0k\0e\0r\0-\0d\0e\0s\0k\0t\0o\0p\0\r\0\n\0D\0e\0b\0i\0a\0n\0\r\0\n\0";
+        assert_eq!(wsl_names(raw), ["Ubuntu", "Debian"]);
+    }
+
+    #[test]
+    fn the_wsl_script_sets_up_with_the_theme_and_only_clears_without() {
+        let set = wsl_script(Some(Some("/mnt/c/x.omp.json")));
+        assert!(set.contains("--config '\\''/mnt/c/x.omp.json'\\''"), "{set}");
+        assert!(set.contains(INSTALL_SH));
+        assert!(set.contains(BEGIN) && !set.contains("@"));
+        let clear = wsl_script(None);
+        assert!(clear.contains("clear_block") && !clear.contains("curl"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn wsl_is_set_up_in_every_distro_and_cleared() {
+        let mut f = Fake::new(Os::Windows, r"C:\Users\ann");
+        f.env.insert("LOCALAPPDATA".into(), r"C:\Users\ann\AppData\Local".into());
+        f.env.insert("SystemRoot".into(), r"C:\Windows".into());
+        let omp = r"C:\Users\ann\AppData\Local\Microsoft\WindowsApps\oh-my-posh.exe";
+        f.file(omp, "");
+        f.program("oh-my-posh", omp);
+        let wsl = r"C:\Windows\System32\wsl.exe";
+        f.file(wsl, "");
+        f.program("wsl", wsl);
+        f.answer("wsl.exe", "-l", "Ubuntu\r\ndocker-desktop\r\n");
+        f.answer("wsl.exe", "-d", "/mnt/c/script.sh\n");
+        let fake = Arc::new(f);
+        let posh = Posh::new(fake.clone());
+        let st = posh.status();
+        let row = st.shells.iter().find(|s| s.shell == Shell::Wsl).unwrap();
+        assert_eq!(row.shown, "Ubuntu");
+        assert!(!row.configured);
+        let done = posh.perform(&Task::Apply { theme: None, shells: vec![Shell::Wsl] });
+        assert!(done.ok, "{:?}", done.log);
+        assert!(done.status.shells.iter().any(|s| s.shell == Shell::Wsl && s.configured));
+        {
+            let runs = fake.runs.lock().unwrap();
+            assert!(runs.iter().any(|r| r.ends_with("-d Ubuntu -e sh /mnt/c/script.sh")), "{runs:?}");
+            assert!(!runs.iter().any(|r| r.contains("docker-desktop")));
+        }
+        let done = posh.perform(&Task::Remove);
+        assert!(done.ok, "{:?}", done.log);
+        assert!(done.status.shells.iter().any(|s| s.shell == Shell::Wsl && !s.configured));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn msys2_and_cygwin_shells_are_found_in_their_own_homes() {
+        let mut f = Fake::new(Os::Windows, r"C:\Users\ann");
+        f.env.insert("USERNAME".into(), "ann".into());
+        f.env.insert("SystemRoot".into(), r"C:\Windows".into());
+        f.file(r"C:\msys64\usr\bin\bash.exe", "");
+        f.file(r"C:\msys64\usr\bin\zsh.exe", "");
+        f.file(r"C:\cygwin64\bin\bash.exe", "");
+        let st = Posh::new(Arc::new(f)).status();
+        let of = |s: Shell| st.shells.iter().find(|x| x.shell == s).map(|x| x.profile.clone());
+        assert_eq!(of(Shell::Msys2Bash), Some(PathBuf::from(r"C:\msys64\home\ann\.bashrc")));
+        assert_eq!(of(Shell::Msys2Zsh), Some(PathBuf::from(r"C:\msys64\home\ann\.zshrc")));
+        assert_eq!(of(Shell::CygwinBash), Some(PathBuf::from(r"C:\cygwin64\home\ann\.bashrc")));
+        assert_eq!(of(Shell::Msys2Fish), None);
+    }
+
+    #[test]
+    fn tilda_windows_and_cosmic_are_set_and_put_back() {
+        let f = linux_box();
+        f.file("/home/ann/.config/tilda/config_0", "font = \"Monospace 13\"\nmax_width=3\n");
+        f.file("/home/ann/.config/tilda/config_1", "font = \"Hack 9\"\n");
+        let cosmic = "/home/ann/.config/cosmic/com.system76.CosmicTerm/v1/font_name";
+        f.file(cosmic, "\"Noto Sans Mono\"");
+        let fake = Arc::new(f);
+        let posh = Posh::new(fake.clone());
+        let names: Vec<String> = posh.status().terminals.into_iter().map(|t| t.name).collect();
+        assert!(["Tilda", "Tilda #2", "COSMIC Terminal"].iter().all(|n| names.iter().any(|x| x == n)), "{names:?}");
+        let done = posh.perform(&Task::SetTerminalFonts);
+        assert!(done.ok, "{:?}", done.log);
+        assert!(fake.text("/home/ann/.config/tilda/config_1").contains("\"MesloLGM Nerd Font 11\""));
+        assert!(fake.text("/home/ann/.config/tilda/config_0").contains("max_width=3"));
+        assert_eq!(fake.text(cosmic).trim(), "\"MesloLGM Nerd Font Mono\"");
+        assert!(done.status.terminals.iter().filter(|t| t.name.starts_with("Tilda") || t.name.starts_with("COSMIC")).all(|t| t.font_set));
+        let done = posh.perform(&Task::RestoreTerminalFonts);
+        assert!(done.ok, "{:?}", done.log);
+        assert_eq!(fake.text(cosmic).trim(), "\"Noto Sans Mono\"");
+        assert!(fake.text("/home/ann/.config/tilda/config_1").contains("Hack 9"));
+    }
+
+    #[test]
+    fn jetbrains_files_are_written_and_put_back() {
+        assert_eq!(xml_font(&xml_with_font("", "ConsoleFont", Some("X"))).as_deref(), Some("X"));
+        let own = "<application>\n  <component name=\"ConsoleFont\">\n    <option name=\"VERSION\" value=\"1\" />\n    <option name=\"FONT_FAMILY\" value=\"Hack\" />\n    <option name=\"FONT_SIZE\" value=\"14\" />\n  </component>\n</application>\n";
+        let set = xml_with_font(own, "ConsoleFont", Some(FONT_MONO));
+        assert_eq!(xml_font(&set).as_deref(), Some(FONT_MONO));
+        assert!(set.contains("FONT_SIZE"));
+        assert_eq!(xml_with_font(&set, "ConsoleFont", Some("Hack")).replace("    <option", "<option"), own.replace("    <option", "<option"));
+
+        let options = "/home/ann/.config/JetBrains/PyCharm2025.2/options";
+        let f = linux_box();
+        f.file(&format!("{options}/other.xml"), "<application />");
+        f.file(&format!("{options}/console-font.xml"), own);
+        // Chrome's folder and an unrelated Google product are not IDEs.
+        f.file("/home/ann/.config/Google/Earth/options/a.xml", "");
+        f.file("/home/ann/.config/Google/AndroidStudio2025.1/options/a.xml", "");
+        let fake = Arc::new(f);
+        let posh = Posh::new(fake.clone());
+        let st = posh.status();
+        let row = st.terminals.iter().find(|t| t.kind == TerminalKind::JetBrains).unwrap();
+        assert_eq!(row.detail, "2 IDEs");
+        assert!(!row.font_set);
+        let done = posh.perform(&Task::SetTerminalFonts);
+        assert!(done.ok, "{:?}", done.log);
+        assert!(fake.text(&format!("{options}/terminal-font.xml")).contains("TerminalFontOptions"));
+        assert!(done.status.terminals.iter().any(|t| t.kind == TerminalKind::JetBrains && t.font_set));
+        let done = posh.perform(&Task::RestoreTerminalFonts);
+        assert!(done.ok, "{:?}", done.log);
+        assert!(!fake.exists(Path::new(&format!("{options}/terminal-font.xml"))));
+        assert_eq!(xml_font(&fake.text(&format!("{options}/console-font.xml"))).as_deref(), Some("Hack"));
+    }
+
+    #[test]
+    fn iterm_dynamic_profiles_are_set_and_put_back() {
+        let dir = "/Users/ann/Library/Application Support/iTerm2/DynamicProfiles";
+        let file = format!("{dir}/work.json");
+        let f = Fake::new(Os::MacOs, "/Users/ann");
+        f.file(&file, "{ \"Profiles\": [ { \"Name\": \"A\", \"Guid\": \"1\", \"Normal Font\": \"Monaco 14\" }, { \"Name\": \"B\", \"Guid\": \"2\" } ] }\n");
+        f.file(&format!("{dir}/binary.plist"), "bplist");
+        let fake = Arc::new(f);
+        let posh = Posh::new(fake.clone());
+        let st = posh.status();
+        let row = st.terminals.iter().find(|t| t.kind == TerminalKind::ITermDynamic).unwrap();
+        assert_eq!(row.detail, "2 profiles");
+        assert!(!row.font_set);
+        let done = posh.perform(&Task::SetTerminalFonts);
+        assert!(fake.text(&file).contains("MesloLGMNFM-Regular 14"), "{:?}", done.log);
+        assert_eq!(fake.text(&format!("{dir}/binary.plist")), "bplist");
+        posh.perform(&Task::RestoreTerminalFonts);
+        assert!(fake.text(&file).contains("Monaco 14"));
+    }
+
+    #[test]
+    fn portable_editors_and_terminals_set_by_hand_are_listed() {
+        let mut f = linux_box();
+        f.file("/opt/vsc/bin/code", "");
+        f.program("code", "/opt/vsc/bin/code");
+        f.file("/opt/vsc/data/user-data/User/settings.json", "{}\n");
+        f.file("/usr/bin/st", "");
+        f.program("st", "/usr/bin/st");
+        let st = Posh::new(Arc::new(f)).status();
+        assert!(st.terminals.iter().any(|t| t.name == "VS Code (portable)"));
+        let hand = st.terminals.iter().find(|t| t.kind == TerminalKind::ByHand).unwrap();
+        assert_eq!(hand.name, "st");
+        assert!(hand.detail.contains("config.h"));
+    }
+
+    #[test]
     fn oh_my_posh_output_is_read_without_its_terminal_codes() {
         // Real output of 31.9.1 when the install fails.
         let failed = "\x1b]7501;state=error:app=oh-my-posh:msg=b3BlbiAuL2RvZXMtbm90LWV4aXN0LnppcDogVGhlIHN5c3RlbSBjYW5ub3QgZmluZCB0aGUgZmlsZSBzcGVjaWZpZWQu\x1b\\";
@@ -7152,7 +8292,7 @@ mod tests {
     #[test]
     fn a_failed_font_install_is_not_reported_as_installed() {
         // Exits with an error, with the font left over from before.
-        let mut f = linux_box();
+        let f = linux_box();
         f.file(MESLO_FILE, "");
         let done = Posh::new(Arc::new(f)).perform(&Task::InstallFont);
         assert!(!done.ok, "{:?}", done.log);
