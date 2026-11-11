@@ -223,6 +223,18 @@ pub fn build(c: &Choices, desktop: &dyn Desktop) -> Vec<Node> {
         Node::Sep,
         item("brightness", "Brightness..."),
         item("posh", "Terminal prompt..."),
+        check(
+            "click-highlight",
+            "Highlight mouse clicks",
+            true,
+            c.click_highlight,
+        ),
+        check(
+            "find-cursor",
+            "Find cursor (press Ctrl twice)",
+            true,
+            c.find_cursor,
+        ),
         check("keep-awake", "Keep system awake", true, c.keep_awake),
         check("startup", desktop.startup_label(), true, c.startup),
         item("brains", "Brains..."),

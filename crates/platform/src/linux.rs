@@ -6,7 +6,7 @@
 //! XWayland: walkers and the brightness panel work, but Wayland does not let any
 //! program read the global cursor, so the position only updates while the pointer is
 //! over an X11 window. See "Platform differences" in the README.
-use super::{BrightnessInfo, Screen};
+use super::{BrightnessInfo, MouseButtons, Screen};
 use crate::prelude::*;
 use crate::rt::{Point, Rectangle};
 use std::ffi::CString;
@@ -203,19 +203,44 @@ pub fn cursor_pos() -> Option<Point> {
     Some(Point::new(r.root_x as i32, r.root_y as i32))
 }
 
+/// The pointer's button and modifier bits; 0 when the server will not say.
+fn pointer_mask() -> u16 {
+    x().and_then(|x| x.conn.query_pointer(x.root).ok()?.reply().ok())
+        .map_or(0, |r| u16::from(r.mask))
+}
+
 pub fn mouse_button_down() -> bool {
+    pointer_mask()
+        & (u16::from(KeyButMask::BUTTON1)
+            | u16::from(KeyButMask::BUTTON2)
+            | u16::from(KeyButMask::BUTTON3))
+        != 0
+}
+
+/// Held right now, after the person's button mapping. The server keeps no record of
+/// presses, so a click shorter than the caller's poll is not seen.
+pub fn mouse_buttons() -> MouseButtons {
+    let mask = pointer_mask();
+    MouseButtons {
+        left: mask & u16::from(KeyButMask::BUTTON1) != 0,
+        right: mask & u16::from(KeyButMask::BUTTON3) != 0,
+    }
+}
+
+pub fn ctrl_down() -> bool {
+    pointer_mask() & u16::from(KeyButMask::CONTROL) != 0
+}
+
+/// More keys are held than the one Ctrl accounts for.
+pub fn other_key_down() -> bool {
     let Some(x) = x() else { return false };
-    x.conn
-        .query_pointer(x.root)
+    let held: u32 = x
+        .conn
+        .query_keymap()
         .ok()
         .and_then(|r| r.reply().ok())
-        .is_some_and(|r| {
-            u16::from(r.mask)
-                & (u16::from(KeyButMask::BUTTON1)
-                    | u16::from(KeyButMask::BUTTON2)
-                    | u16::from(KeyButMask::BUTTON3))
-                != 0
-        })
+        .map_or(0, |r| r.keys.iter().map(|b| b.count_ones()).sum());
+    held > ctrl_down() as u32
 }
 
 // ---- Pacing and power ---------------------------------------------------------------------
@@ -604,6 +629,11 @@ pub struct SpriteWindow {
 }
 
 impl SpriteWindow {
+    /// Nothing hides an X11 window from a capture, so this is the same window.
+    pub fn capturable() -> Self {
+        Self::new()
+    }
+
     pub fn new() -> Self {
         let mut s = SpriteWindow {
             win: None,

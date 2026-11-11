@@ -11,8 +11,8 @@ pub mod updates;
 
 pub use brains::Brains;
 pub use ports::{
-    BrainStore, BrightnessInfo, Desktop, Displays, Journal, Os, PreferenceStore, ReleaseFeed,
-    RunResult, Screen, Workstation,
+    BrainStore, BrightnessInfo, Desktop, Displays, Journal, MouseButtons, Os, PreferenceStore,
+    ReleaseFeed, RunResult, Screen, Workstation,
 };
 pub use posh::Posh;
 pub use preferences::Preferences;

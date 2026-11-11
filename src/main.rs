@@ -55,6 +55,7 @@ fn main() {
             Session::new(ports, !test)
         }),
         sprites: platform::sprite_factory(),
+        pointer_sprites: platform::capturable_sprite_factory(),
         updates,
         posh,
         journal,

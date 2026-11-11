@@ -29,7 +29,7 @@ use gfx::Font;
 use idlewalker_application::{
     Brains, BrightnessInfo, Desktop, Journal, Posh, Screen, Session, UpdateState, Updates,
 };
-use overlays::{AboutToast, CornerRipple, DisplayBadges};
+use overlays::{AboutToast, ClickHighlight, CornerRipple, DisplayBadges, FindCursor};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -69,6 +69,8 @@ pub struct Wiring {
     /// Builds the session; runs once the event loop exists, so the OS is ready for it.
     pub session: Box<dyn FnOnce() -> Session>,
     pub sprites: SpriteFactory,
+    /// Sprite windows that screen captures include, for the click highlight.
+    pub pointer_sprites: SpriteFactory,
     pub updates: Updates,
     /// The terminal prompt use case.
     pub posh: Posh,
@@ -160,10 +162,15 @@ struct App {
     session: Session,
     services: Services,
     sprites: SpriteFactory,
+    pointer_sprites: SpriteFactory,
     on_painter_start: fn(),
     check_for_updates: bool,
     test_menu: Vec<String>,
     ripple: Option<CornerRipple>,
+    /// There only while "Highlight mouse clicks" is ticked.
+    highlight: Option<ClickHighlight>,
+    /// There only while "Find cursor" is ticked.
+    finder: Option<FindCursor>,
     clock: Instant,
     views: Vec<View>,
     tray: Option<Tray>,
@@ -201,10 +208,13 @@ impl App {
             session,
             services,
             sprites: wiring.sprites,
+            pointer_sprites: wiring.pointer_sprites,
             on_painter_start: wiring.on_painter_start,
             check_for_updates: wiring.check_for_updates,
             test_menu: wiring.test_menu,
             ripple: None,
+            highlight: None,
+            finder: None,
             clock: Instant::now(),
             views: Vec::new(),
             tray: None,
@@ -341,6 +351,39 @@ impl App {
                 self.about = None;
             }
         }
+        // The click highlight: a spot under the cursor for as long as a button is down.
+        if self.session.choices().click_highlight {
+            let desktop = &self.services.desktop;
+            let sprites = &self.pointer_sprites;
+            let h = self.highlight.get_or_insert_with(|| {
+                let _ = desktop.mouse_buttons(); // a click from before it was on is not news
+                ClickHighlight::new(sprites)
+            });
+            let displays = self.session.displays();
+            h.tick(self.session.cursor(), desktop.mouse_buttons(), |p| {
+                displays.screen_at(p).dpi_scale
+            });
+        } else {
+            self.highlight = None;
+        }
+        // Find cursor: Ctrl pressed twice lights up where the cursor is.
+        if self.session.choices().find_cursor {
+            let desktop = &self.services.desktop;
+            let sprites = &self.pointer_sprites;
+            let f = self.finder.get_or_insert_with(|| {
+                let _ = desktop.ctrl_down(); // a press from before it was on is not news
+                FindCursor::new(sprites)
+            });
+            let ctrl = desktop.ctrl_down();
+            let other = (ctrl || f.watching()) && desktop.other_key_down();
+            let button = desktop.mouse_button_down();
+            let displays = self.session.displays();
+            f.tick(now, self.session.cursor(), ctrl, other, button, |p| {
+                displays.screen_at(p).dpi_scale
+            });
+        } else {
+            self.finder = None;
+        }
         if now >= self.next_dialog_refresh {
             self.next_dialog_refresh = now + 1.0;
             for d in self.dialogs.values() {
@@ -351,8 +394,10 @@ impl App {
         }
 
         let ripple_on = self.ripple.as_ref().is_some_and(|r| r.active());
+        let highlight_on = self.highlight.as_ref().is_some_and(|h| h.active());
+        let finder_on = self.finder.as_ref().is_some_and(|f| f.active());
         self.pump.animating.store(
-            report.any_visible || ripple_on || self.about.is_some(),
+            report.any_visible || ripple_on || highlight_on || finder_on || self.about.is_some(),
             Ordering::Relaxed,
         );
         let _ = el;

@@ -2,7 +2,7 @@
 //! The same Win32 calls as the C# original's Native.cs, declared by hand so there is
 //! no dependency beyond what ships with Windows.
 #![allow(non_snake_case, non_camel_case_types)]
-use super::{BrightnessInfo, Screen};
+use super::{BrightnessInfo, MouseButtons, Screen};
 use crate::prelude::*;
 use std::collections::HashMap;
 use std::ffi::c_void;
@@ -45,6 +45,9 @@ const GWL_EXSTYLE: i32 = -20;
 const WS_CAPTION: i32 = 0x00C00000;
 const DWMWA_CLOAKED: u32 = 14;
 const WDA_MONITOR: u32 = 1;
+const SM_SWAPBUTTON: i32 = 23;
+const VK_LCONTROL: u8 = 0xA2;
+const VK_RCONTROL: u8 = 0xA3;
 const WDA_EXCLUDEFROMCAPTURE: u32 = 0x11;
 
 #[repr(C)]
@@ -155,6 +158,7 @@ extern "system" {
     fn SetWindowDisplayAffinity(h: HWND, a: u32) -> i32;
     fn GetCursorPos(p: *mut POINT) -> i32;
     fn GetAsyncKeyState(vk: i32) -> i16;
+    fn GetSystemMetrics(index: i32) -> i32;
     fn EnumDisplayMonitors(
         dc: isize,
         clip: *const RECT,
@@ -396,12 +400,62 @@ pub fn cursor_pos() -> Option<Point> {
     (unsafe { GetCursorPos(&mut p) } != 0).then(|| Point::new(p.x, p.y))
 }
 
-pub fn mouse_button_down() -> bool {
-    unsafe {
-        [1, 2, 4]
-            .iter()
-            .any(|&vk| GetAsyncKeyState(vk) as u16 & 0x8000 != 0)
+/// Presses the OS reported that nobody has shown yet: bit 0 the physical left button,
+/// bit 1 the right. Asking for a key's state also clears its "pressed since the last
+/// call" bit, whoever asks, so every reading keeps that bit here for the click highlight.
+static PRESSED: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
+
+/// The buttons held right now, as bits: physical left, right, middle.
+fn read_buttons() -> u8 {
+    let (mut held, mut pressed) = (0u8, 0u8);
+    for (bit, vk) in [1, 2, 4].into_iter().enumerate() {
+        let state = unsafe { GetAsyncKeyState(vk) } as u16;
+        if state & 0x8000 != 0 {
+            held |= 1 << bit;
+        }
+        if state & 1 != 0 {
+            pressed |= 1 << bit;
+        }
     }
+    if pressed != 0 {
+        PRESSED.fetch_or(pressed, std::sync::atomic::Ordering::Relaxed);
+    }
+    held
+}
+
+pub fn mouse_button_down() -> bool {
+    read_buttons() != 0
+}
+
+/// Held, or clicked since the last call. The key states are the physical buttons, so a
+/// left-handed mouse has them swapped back to what the person calls left and right.
+pub fn mouse_buttons() -> MouseButtons {
+    let seen = read_buttons() | PRESSED.swap(0, std::sync::atomic::Ordering::Relaxed);
+    let (first, second) = (seen & 1 != 0, seen & 2 != 0);
+    if unsafe { GetSystemMetrics(SM_SWAPBUTTON) } != 0 {
+        MouseButtons {
+            left: second,
+            right: first,
+        }
+    } else {
+        MouseButtons {
+            left: first,
+            right: second,
+        }
+    }
+}
+
+/// Either Ctrl key: held, or pressed since the last call, so a tap shorter than the
+/// caller's poll still counts.
+pub fn ctrl_down() -> bool {
+    unsafe { GetAsyncKeyState(VK_CONTROL as i32) as u16 & 0x8001 != 0 }
+}
+
+/// Any other key held right now. One call per key code: only for the moments it matters.
+pub fn other_key_down() -> bool {
+    (8..=0xFEu8)
+        .filter(|vk| !matches!(*vk, VK_CONTROL | VK_LCONTROL | VK_RCONTROL))
+        .any(|vk| unsafe { GetAsyncKeyState(vk as i32) } as u16 & 0x8000 != 0)
 }
 
 // ---- Pacing and power -----------------------------------------------------------------
@@ -1305,12 +1359,21 @@ pub struct SpriteWindow {
 
 impl SpriteWindow {
     pub fn new() -> Self {
+        Self::create(true)
+    }
+
+    /// One that screenshots and screen captures include.
+    pub fn capturable() -> Self {
+        Self::create(false)
+    }
+
+    fn create(private: bool) -> Self {
         let hwnd = plain_window(
             WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_NOACTIVATE,
         );
         // Visible on screen, missing from screenshots and screen captures.
         // IDLEWALKER_TEST leaves them capturable, so a test can look at them.
-        if std::env::var_os("IDLEWALKER_TEST").is_none() {
+        if private && std::env::var_os("IDLEWALKER_TEST").is_none() {
             unsafe {
                 if SetWindowDisplayAffinity(hwnd, WDA_EXCLUDEFROMCAPTURE) == 0 {
                     SetWindowDisplayAffinity(hwnd, WDA_MONITOR);

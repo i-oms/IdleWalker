@@ -4,7 +4,7 @@
 //! Retina screen gets full-resolution sprites. AppKit's y axis points up from the
 //! primary display's bottom edge; everything is converted at this boundary.
 #![allow(non_upper_case_globals)]
-use super::{BrightnessInfo, Screen};
+use super::{BrightnessInfo, MouseButtons, Screen};
 use crate::prelude::*;
 use objc2::runtime::AnyObject;
 use objc2::{class, msg_send};
@@ -39,6 +39,7 @@ extern "C" {
     ) -> *mut c_void;
     fn CGImageRelease(i: *mut c_void);
     fn CGEventSourceSecondsSinceLastEventType(state: i32, kind: u32) -> f64;
+    fn CGEventSourceCounterForEventType(state: i32, kind: u32) -> u32;
     fn CGEventCreateKeyboardEvent(src: *mut c_void, key: u16, down: bool) -> *mut c_void;
     fn CGEventSetFlags(e: *mut c_void, flags: u64);
     fn CGEventPost(tap: u32, e: *mut c_void);
@@ -226,6 +227,48 @@ pub fn cursor_pos() -> Option<Point> {
 pub fn mouse_button_down() -> bool {
     let b: usize = unsafe { msg_send![class!(NSEvent), pressedMouseButtons] };
     b != 0
+}
+
+/// Held, or clicked since the last call: the session counts every button press, so a
+/// click that came and went between two polls still shows as a count that moved.
+pub fn mouse_buttons() -> MouseButtons {
+    static COUNTS: std::sync::Mutex<Option<(u32, u32)>> = std::sync::Mutex::new(None);
+    let held: usize = unsafe { msg_send![class!(NSEvent), pressedMouseButtons] };
+    // kCGEventLeftMouseDown and kCGEventRightMouseDown, in the combined session state.
+    let now = unsafe {
+        (
+            CGEventSourceCounterForEventType(0, 1),
+            CGEventSourceCounterForEventType(0, 3),
+        )
+    };
+    let mut counts = COUNTS.lock().unwrap_or_else(|e| e.into_inner());
+    let before = counts.replace(now).unwrap_or(now);
+    MouseButtons {
+        left: held & 1 != 0 || now.0 != before.0,
+        right: held & 2 != 0 || now.1 != before.1,
+    }
+}
+
+/// The modifier keys held right now, as NSEvent's flags. Needs no permission.
+fn modifier_flags() -> usize {
+    unsafe { msg_send![class!(NSEvent), modifierFlags] }
+}
+
+pub fn ctrl_down() -> bool {
+    modifier_flags() & (1 << 18) != 0 // NSEventModifierFlagControl
+}
+
+/// Shift, Option or Command held, or any key pressed since the last call: the session
+/// counts key presses, so one shows as a count that moved. A reading older than a second
+/// is not compared, since the keys typed before anyone was asking are not news.
+pub fn other_key_down() -> bool {
+    static SEEN: std::sync::Mutex<Option<(std::time::Instant, u32)>> = std::sync::Mutex::new(None);
+    let modifiers = modifier_flags() & ((1 << 17) | (1 << 19) | (1 << 20)) != 0;
+    let count = unsafe { CGEventSourceCounterForEventType(0, 10) }; // kCGEventKeyDown
+    let mut seen = SEEN.lock().unwrap_or_else(|e| e.into_inner());
+    let before = seen.replace((std::time::Instant::now(), count));
+    let typed = before.is_some_and(|(at, n)| at.elapsed().as_secs_f64() < 1.0 && n != count);
+    modifiers || typed
 }
 
 // ---- Pacing and power --------------------------------------------------------------------
@@ -1145,6 +1188,15 @@ pub struct SpriteWindow {
 
 impl SpriteWindow {
     pub fn new() -> Self {
+        Self::create(true)
+    }
+
+    /// One that screenshots and screen sharing include.
+    pub fn capturable() -> Self {
+        Self::create(false)
+    }
+
+    fn create(private: bool) -> Self {
         unsafe {
             let rect = NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(1.0, 1.0));
             let w: Id = msg_send![class!(NSWindow), alloc];
@@ -1160,7 +1212,9 @@ impl SpriteWindow {
                                                          // All spaces, stays put in Mission Control, allowed beside full-screen apps.
             let _: () =
                 msg_send![w, setCollectionBehavior: (1usize << 0) | (1 << 4) | (1 << 6) | (1 << 8)];
-            let _: () = msg_send![w, setSharingType: 0usize]; // NSWindowSharingNone
+            if private {
+                let _: () = msg_send![w, setSharingType: 0usize]; // NSWindowSharingNone
+            }
             let view: Id = msg_send![w, contentView];
             let _: () = msg_send![view, setWantsLayer: true];
             let root: Id = msg_send![view, layer];

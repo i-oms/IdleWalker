@@ -1,7 +1,7 @@
 //! The OS backends behind the ports. Each implementation only forwards to the backend
 //! compiled for this OS, so the ports stay the one place a capability is described.
 use crate::prelude::*;
-use crate::{backend, BrightnessInfo, MonitorWorld, Screen, SpriteWindow};
+use crate::{backend, BrightnessInfo, MonitorWorld, MouseButtons, Screen, SpriteWindow};
 use idlewalker_application::{
     Desktop, Displays, Journal, Os, ReleaseFeed, RunResult, Updates, Workstation,
 };
@@ -20,6 +20,15 @@ impl Desktop for NativeDesktop {
     }
     fn mouse_button_down(&self) -> bool {
         backend::mouse_button_down()
+    }
+    fn mouse_buttons(&self) -> MouseButtons {
+        backend::mouse_buttons()
+    }
+    fn ctrl_down(&self) -> bool {
+        backend::ctrl_down()
+    }
+    fn other_key_down(&self) -> bool {
+        backend::other_key_down()
     }
     fn system_idle_seconds(&self) -> f64 {
         backend::system_idle_seconds()
@@ -122,6 +131,12 @@ impl SpriteSink for SpriteWindow {
 /// Makes this OS's sprite windows.
 pub fn sprite_factory() -> SpriteFactory {
     Arc::new(|| Box::new(SpriteWindow::new()) as Box<dyn SpriteSink>)
+}
+
+/// Makes sprite windows that screenshots, recordings and screen sharing include: the
+/// click highlight is there to be seen by whoever is watching.
+pub fn capturable_sprite_factory() -> SpriteFactory {
+    Arc::new(|| Box::new(SpriteWindow::capturable()) as Box<dyn SpriteSink>)
 }
 
 // ---- The local clock ---------------------------------------------------------------------

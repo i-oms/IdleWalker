@@ -75,6 +75,14 @@ impl Preferences {
         "KeepAwake",
         Settings::KEEP_AWAKE_BY_DEFAULT
     );
+    // Off until asked for: it draws over whatever the person is working on.
+    switch!(
+        load_click_highlight,
+        save_click_highlight,
+        "ClickHighlight",
+        false
+    );
+    switch!(load_find_cursor, save_find_cursor, "FindCursor", false);
 
     /// True once "start at sign-in" has been set up, so the default applies only once.
     pub fn startup_decided(&self) -> bool {

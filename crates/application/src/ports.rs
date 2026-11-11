@@ -35,6 +35,14 @@ pub struct BrightnessInfo {
     pub key: String,
 }
 
+/// The two main mouse buttons, as the person's settings name them: on a left-handed
+/// mouse `left` is still the primary button.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct MouseButtons {
+    pub left: bool,
+    pub right: bool,
+}
+
 // ---- The desktop -------------------------------------------------------------------------
 
 /// The OS services the program uses. Every method is cheap unless it says otherwise,
@@ -43,6 +51,15 @@ pub trait Desktop: Send + Sync {
     /// Where the cursor is, in world pixels; `None` when the OS will not say.
     fn cursor_pos(&self) -> Option<Point>;
     fn mouse_button_down(&self) -> bool;
+    /// Which main buttons are held, or were pressed since the last call: where the OS
+    /// can say, a click shorter than the caller's poll is still reported once. For one
+    /// caller only (the click highlight), since asking forgets the presses.
+    fn mouse_buttons(&self) -> MouseButtons;
+    /// A Ctrl key is held, or where the OS can say was pressed since the last call.
+    fn ctrl_down(&self) -> bool;
+    /// Any key besides Ctrl is held, the other modifiers included. Dearer than the rest:
+    /// asked only while a Ctrl press is being followed.
+    fn other_key_down(&self) -> bool;
     /// Seconds since the last input the OS counted, from anyone.
     fn system_idle_seconds(&self) -> f64;
     /// A harmless input that resets the OS idle clock.
