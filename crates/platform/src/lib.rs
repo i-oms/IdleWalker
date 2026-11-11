@@ -16,10 +16,11 @@
 mod adapters;
 mod files;
 pub use adapters::{
-    sprite_factory, CurlReleaseFeed, NativeDesktop, NativeWorkstation, SystemClock, TempFileJournal,
+    capturable_sprite_factory, sprite_factory, CurlReleaseFeed, NativeDesktop, NativeWorkstation,
+    SystemClock, TempFileJournal,
 };
 pub use files::{FileBrainStore, FilePreferences};
-pub use idlewalker_application::{BrightnessInfo, Screen};
+pub use idlewalker_application::{BrightnessInfo, Modifier, MouseButtons, Screen};
 
 pub(crate) use idlewalker_domain::rt;
 pub(crate) mod prelude {

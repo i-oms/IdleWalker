@@ -3,7 +3,7 @@
 //! per frame, saves what it learned, and applies the menu's choices. The presentation
 //! layer calls `tick` once per frame and shows the result.
 use crate::brains::Brains;
-use crate::ports::{Desktop, Displays, Journal};
+use crate::ports::{Desktop, Displays, Journal, Modifier};
 use crate::preferences::Preferences;
 use idlewalker_domain::prelude::*;
 use std::sync::Arc;
@@ -17,6 +17,11 @@ pub struct Choices {
     pub hide_on_move: bool,
     pub corners: bool,
     pub keep_awake: bool,
+    /// A coloured spot under the cursor at every click.
+    pub click_highlight: bool,
+    /// Pressing `find_key` twice shows where the cursor is.
+    pub find_cursor: bool,
+    pub find_key: Modifier,
     pub startup: bool,
     pub minion_mask: i32,
     pub bird_mask: i32,
@@ -157,6 +162,9 @@ impl Session {
             hide_on_move: prefs.load_hide_on_move(),
             corners: prefs.load_hot_corners_enabled(),
             keep_awake: prefs.load_keep_awake(),
+            click_highlight: prefs.load_click_highlight(),
+            find_cursor: prefs.load_find_cursor(),
+            find_key: prefs.load_find_key(),
             startup: desktop.startup_is_enabled(),
             minion_mask: troupe.minion_mask(),
             bird_mask: troupe.bird_mask(),
@@ -408,6 +416,20 @@ impl Session {
                 self.choices.keep_awake = !self.choices.keep_awake;
                 prefs.save_keep_awake(self.choices.keep_awake);
                 self.desktop.keep_awake(self.choices.keep_awake);
+            }
+            "click-highlight" => {
+                self.choices.click_highlight = !self.choices.click_highlight;
+                prefs.save_click_highlight(self.choices.click_highlight);
+            }
+            "find-cursor" => {
+                self.choices.find_cursor = !self.choices.find_cursor;
+                prefs.save_find_cursor(self.choices.find_cursor);
+            }
+            "find-key" => {
+                if let Some(key) = Modifier::from_i32(value) {
+                    self.choices.find_key = key;
+                    prefs.save_find_key(key);
+                }
             }
             "startup" => {
                 let enable = !self.choices.startup;

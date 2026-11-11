@@ -67,6 +67,11 @@ Notable changes are recorded here. The format follows
 
 ### Added
 
+- "Highlight mouse clicks" in the menu: a spot under the cursor at every click, yellow for
+  the left button and blue for the right. It follows a drag, fades where the button was let
+  go, is sized by each monitor's display scaling, and shows in screen captures.
+- "Find cursor" in the menu: pressing Ctrl twice (or Shift or Alt, as chosen there) puts a dark halo with a bright ring around
+  the cursor, on whichever monitor it is. A click, a key or three seconds' rest dismisses it.
 - Rust port of the C# Windows original, running on Windows, macOS and Linux.
 - Settings menu and dialogs drawn by the program.
 - Automated builds and releases for all supported platforms.
