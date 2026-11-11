@@ -2,7 +2,7 @@
 //! The same Win32 calls as the C# original's Native.cs, declared by hand so there is
 //! no dependency beyond what ships with Windows.
 #![allow(non_snake_case, non_camel_case_types)]
-use super::{BrightnessInfo, MouseButtons, Screen};
+use super::{BrightnessInfo, Modifier, MouseButtons, Screen};
 use crate::prelude::*;
 use std::collections::HashMap;
 use std::ffi::c_void;
@@ -46,8 +46,6 @@ const WS_CAPTION: i32 = 0x00C00000;
 const DWMWA_CLOAKED: u32 = 14;
 const WDA_MONITOR: u32 = 1;
 const SM_SWAPBUTTON: i32 = 23;
-const VK_LCONTROL: u8 = 0xA2;
-const VK_RCONTROL: u8 = 0xA3;
 const WDA_EXCLUDEFROMCAPTURE: u32 = 0x11;
 
 #[repr(C)]
@@ -445,16 +443,26 @@ pub fn mouse_buttons() -> MouseButtons {
     }
 }
 
-/// Either Ctrl key: held, or pressed since the last call, so a tap shorter than the
-/// caller's poll still counts.
-pub fn ctrl_down() -> bool {
-    unsafe { GetAsyncKeyState(VK_CONTROL as i32) as u16 & 0x8001 != 0 }
+/// A modifier's key codes: the one for either side, then the left and the right key.
+fn modifier_keys(key: Modifier) -> [u8; 3] {
+    match key {
+        Modifier::Shift => [0x10, 0xA0, 0xA1],
+        Modifier::Ctrl => [VK_CONTROL, 0xA2, 0xA3],
+        Modifier::Alt => [0x12, 0xA4, 0xA5],
+    }
+}
+
+/// Either key of the modifier: held, or pressed since the last call, so a tap shorter
+/// than the caller's poll still counts.
+pub fn modifier_down(key: Modifier) -> bool {
+    unsafe { GetAsyncKeyState(modifier_keys(key)[0] as i32) as u16 & 0x8001 != 0 }
 }
 
 /// Any other key held right now. One call per key code: only for the moments it matters.
-pub fn other_key_down() -> bool {
+pub fn other_key_down(key: Modifier) -> bool {
+    let own = modifier_keys(key);
     (8..=0xFEu8)
-        .filter(|vk| !matches!(*vk, VK_CONTROL | VK_LCONTROL | VK_RCONTROL))
+        .filter(|vk| !own.contains(vk))
         .any(|vk| unsafe { GetAsyncKeyState(vk as i32) } as u16 & 0x8000 != 0)
 }
 

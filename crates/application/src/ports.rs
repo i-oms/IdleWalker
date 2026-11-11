@@ -43,6 +43,25 @@ pub struct MouseButtons {
     pub right: bool,
 }
 
+/// A modifier key, on either side of the keyboard.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Modifier {
+    #[default]
+    Ctrl,
+    Shift,
+    /// Option on a Mac.
+    Alt,
+}
+
+impl Modifier {
+    pub const ALL: [Modifier; 3] = [Modifier::Ctrl, Modifier::Shift, Modifier::Alt];
+
+    /// From its saved number; `None` for one that was never a choice.
+    pub fn from_i32(v: i32) -> Option<Modifier> {
+        Modifier::ALL.into_iter().find(|m| *m as i32 == v)
+    }
+}
+
 // ---- The desktop -------------------------------------------------------------------------
 
 /// The OS services the program uses. Every method is cheap unless it says otherwise,
@@ -55,11 +74,13 @@ pub trait Desktop: Send + Sync {
     /// can say, a click shorter than the caller's poll is still reported once. For one
     /// caller only (the click highlight), since asking forgets the presses.
     fn mouse_buttons(&self) -> MouseButtons;
-    /// A Ctrl key is held, or where the OS can say was pressed since the last call.
-    fn ctrl_down(&self) -> bool;
-    /// Any key besides Ctrl is held, the other modifiers included. Dearer than the rest:
-    /// asked only while a Ctrl press is being followed.
-    fn other_key_down(&self) -> bool;
+    /// The modifier is held, or where the OS can say was pressed since the last call.
+    fn modifier_down(&self, key: Modifier) -> bool;
+    /// Any key besides that modifier is held, the other modifiers included. Dearer than
+    /// the rest: asked only while a press of the modifier is being followed.
+    fn other_key_down(&self, key: Modifier) -> bool;
+    /// What this OS's keyboards call the modifier.
+    fn modifier_name(&self, key: Modifier) -> &'static str;
     /// Seconds since the last input the OS counted, from anyone.
     fn system_idle_seconds(&self) -> f64;
     /// A harmless input that resets the OS idle clock.

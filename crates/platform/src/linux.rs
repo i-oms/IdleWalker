@@ -6,7 +6,7 @@
 //! XWayland: walkers and the brightness panel work, but Wayland does not let any
 //! program read the global cursor, so the position only updates while the pointer is
 //! over an X11 window. See "Platform differences" in the README.
-use super::{BrightnessInfo, MouseButtons, Screen};
+use super::{BrightnessInfo, Modifier, MouseButtons, Screen};
 use crate::prelude::*;
 use crate::rt::{Point, Rectangle};
 use std::ffi::CString;
@@ -227,12 +227,17 @@ pub fn mouse_buttons() -> MouseButtons {
     }
 }
 
-pub fn ctrl_down() -> bool {
-    pointer_mask() & u16::from(KeyButMask::CONTROL) != 0
+pub fn modifier_down(key: Modifier) -> bool {
+    let bit = match key {
+        Modifier::Shift => KeyButMask::SHIFT,
+        Modifier::Ctrl => KeyButMask::CONTROL,
+        Modifier::Alt => KeyButMask::MOD1,
+    };
+    pointer_mask() & u16::from(bit) != 0
 }
 
-/// More keys are held than the one Ctrl accounts for.
-pub fn other_key_down() -> bool {
+/// More keys are held than the one the modifier accounts for.
+pub fn other_key_down(key: Modifier) -> bool {
     let Some(x) = x() else { return false };
     let held: u32 = x
         .conn
@@ -240,7 +245,7 @@ pub fn other_key_down() -> bool {
         .ok()
         .and_then(|r| r.reply().ok())
         .map_or(0, |r| r.keys.iter().map(|b| b.count_ones()).sum());
-    held > ctrl_down() as u32
+    held > modifier_down(key) as u32
 }
 
 // ---- Pacing and power ---------------------------------------------------------------------

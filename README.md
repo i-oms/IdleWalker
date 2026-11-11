@@ -105,6 +105,7 @@ cargo build --release
   Unlike the walkers it shows in recordings and screen shares, which is what it is for.
 - 🔦 **Find cursor.** Tick *Find cursor* and press Ctrl twice: a dark halo closes in on the
   cursor, wherever it is on your monitors. A click, a key or a few seconds' rest sends it away.
+  The key is yours to pick in the menu: Ctrl, Shift or Alt (Option on a Mac).
 - 💻 **Terminal prompt.** A window that sets up [Oh My Posh](https://ohmyposh.dev) for you:
   installs or updates it, fetches its themes, puts the one you pick into every shell you have
   (PowerShell, Windows PowerShell, bash, zsh, fish, Command Prompt through Clink, nu), installs

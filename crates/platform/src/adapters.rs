@@ -1,7 +1,7 @@
 //! The OS backends behind the ports. Each implementation only forwards to the backend
 //! compiled for this OS, so the ports stay the one place a capability is described.
 use crate::prelude::*;
-use crate::{backend, BrightnessInfo, MonitorWorld, MouseButtons, Screen, SpriteWindow};
+use crate::{backend, BrightnessInfo, Modifier, MonitorWorld, MouseButtons, Screen, SpriteWindow};
 use idlewalker_application::{
     Desktop, Displays, Journal, Os, ReleaseFeed, RunResult, Updates, Workstation,
 };
@@ -24,11 +24,20 @@ impl Desktop for NativeDesktop {
     fn mouse_buttons(&self) -> MouseButtons {
         backend::mouse_buttons()
     }
-    fn ctrl_down(&self) -> bool {
-        backend::ctrl_down()
+    fn modifier_down(&self, key: Modifier) -> bool {
+        backend::modifier_down(key)
     }
-    fn other_key_down(&self) -> bool {
-        backend::other_key_down()
+    fn other_key_down(&self, key: Modifier) -> bool {
+        backend::other_key_down(key)
+    }
+    fn modifier_name(&self, key: Modifier) -> &'static str {
+        match key {
+            Modifier::Ctrl if cfg!(target_os = "macos") => "Control",
+            Modifier::Ctrl => "Ctrl",
+            Modifier::Shift => "Shift",
+            Modifier::Alt if cfg!(target_os = "macos") => "Option",
+            Modifier::Alt => "Alt",
+        }
     }
     fn system_idle_seconds(&self) -> f64 {
         backend::system_idle_seconds()

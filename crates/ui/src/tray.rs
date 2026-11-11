@@ -6,7 +6,7 @@
 use super::UserEvent;
 use crate::prelude::*;
 pub use idlewalker_application::Choices;
-use idlewalker_application::Desktop;
+use idlewalker_application::{Desktop, Modifier};
 use winit::event_loop::EventLoopProxy;
 
 #[derive(Clone)]
@@ -195,6 +195,19 @@ pub fn build(c: &Choices, desktop: &dyn Desktop) -> Vec<Node> {
         children: delays,
     });
 
+    let mut find = vec![
+        check("find-cursor", "Enabled", true, c.find_cursor),
+        Node::Sep,
+    ];
+    for key in Modifier::ALL {
+        find.push(check(
+            format!("find-key:{}", key as i32),
+            format!("Press {} twice", desktop.modifier_name(key)),
+            c.find_cursor,
+            key == c.find_key,
+        ));
+    }
+
     vec![
         check("walkers", "Walkers", true, c.walkers),
         Node::Sub {
@@ -229,12 +242,11 @@ pub fn build(c: &Choices, desktop: &dyn Desktop) -> Vec<Node> {
             true,
             c.click_highlight,
         ),
-        check(
-            "find-cursor",
-            "Find cursor (press Ctrl twice)",
-            true,
-            c.find_cursor,
-        ),
+        Node::Sub {
+            label: format!("Find cursor: {} twice", desktop.modifier_name(c.find_key)),
+            enabled: true,
+            children: find,
+        },
         check("keep-awake", "Keep system awake", true, c.keep_awake),
         check("startup", desktop.startup_label(), true, c.startup),
         item("brains", "Brains..."),

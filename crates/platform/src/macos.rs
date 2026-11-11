@@ -4,7 +4,7 @@
 //! Retina screen gets full-resolution sprites. AppKit's y axis points up from the
 //! primary display's bottom edge; everything is converted at this boundary.
 #![allow(non_upper_case_globals)]
-use super::{BrightnessInfo, MouseButtons, Screen};
+use super::{BrightnessInfo, Modifier, MouseButtons, Screen};
 use crate::prelude::*;
 use objc2::runtime::AnyObject;
 use objc2::{class, msg_send};
@@ -254,16 +254,26 @@ fn modifier_flags() -> usize {
     unsafe { msg_send![class!(NSEvent), modifierFlags] }
 }
 
-pub fn ctrl_down() -> bool {
-    modifier_flags() & (1 << 18) != 0 // NSEventModifierFlagControl
+/// NSEvent's flag for a modifier.
+fn modifier_flag(key: Modifier) -> usize {
+    match key {
+        Modifier::Shift => 1 << 17,
+        Modifier::Ctrl => 1 << 18,
+        Modifier::Alt => 1 << 19, // Option
+    }
 }
 
-/// Shift, Option or Command held, or any key pressed since the last call: the session
+pub fn modifier_down(key: Modifier) -> bool {
+    modifier_flags() & modifier_flag(key) != 0
+}
+
+/// Another modifier held (Command too), or any key pressed since the last call: the session
 /// counts key presses, so one shows as a count that moved. A reading older than a second
 /// is not compared, since the keys typed before anyone was asking are not news.
-pub fn other_key_down() -> bool {
+pub fn other_key_down(key: Modifier) -> bool {
     static SEEN: std::sync::Mutex<Option<(std::time::Instant, u32)>> = std::sync::Mutex::new(None);
-    let modifiers = modifier_flags() & ((1 << 17) | (1 << 19) | (1 << 20)) != 0;
+    let all = (1 << 17) | (1 << 18) | (1 << 19) | (1 << 20);
+    let modifiers = modifier_flags() & all & !modifier_flag(key) != 0;
     let count = unsafe { CGEventSourceCounterForEventType(0, 10) }; // kCGEventKeyDown
     let mut seen = SEEN.lock().unwrap_or_else(|e| e.into_inner());
     let before = seen.replace((std::time::Instant::now(), count));

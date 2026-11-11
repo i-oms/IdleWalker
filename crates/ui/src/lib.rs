@@ -366,19 +366,20 @@ impl App {
         } else {
             self.highlight = None;
         }
-        // Find cursor: Ctrl pressed twice lights up where the cursor is.
+        // Find cursor: the chosen key pressed twice lights up where the cursor is.
         if self.session.choices().find_cursor {
+            let key = self.session.choices().find_key;
             let desktop = &self.services.desktop;
             let sprites = &self.pointer_sprites;
             let f = self.finder.get_or_insert_with(|| {
-                let _ = desktop.ctrl_down(); // a press from before it was on is not news
+                let _ = desktop.modifier_down(key); // a press from before it was on is not news
                 FindCursor::new(sprites)
             });
-            let ctrl = desktop.ctrl_down();
-            let other = (ctrl || f.watching()) && desktop.other_key_down();
+            let down = desktop.modifier_down(key);
+            let other = (down || f.watching()) && desktop.other_key_down(key);
             let button = desktop.mouse_button_down();
             let displays = self.session.displays();
-            f.tick(now, self.session.cursor(), ctrl, other, button, |p| {
+            f.tick(now, self.session.cursor(), down, other, button, |p| {
                 displays.screen_at(p).dpi_scale
             });
         } else {

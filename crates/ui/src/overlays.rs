@@ -295,7 +295,7 @@ fn spot_disc(c: &mut Canvas, radius: f64, color: u32) {
     }
 }
 
-// ---- Find cursor: Ctrl twice puts a spotlight on the cursor -------------------------------
+// ---- Find cursor: a key pressed twice puts a spotlight on the cursor -----------------------
 
 /// A press held longer than this is not a tap, in seconds.
 const TAP_MAX: f64 = 0.3;
@@ -310,28 +310,28 @@ enum Tap {
     Down(f64),
     /// The first press was let go, when.
     Up(f64),
-    /// Nothing more can come of this press: wait for Ctrl to be let go.
+    /// Nothing more can come of this press: wait for the key to be let go.
     Spent,
 }
 
-/// Recognises Ctrl pressed twice in a row with nothing else in between, so Ctrl+C
-/// twice, or Ctrl held for a shortcut, is not taken for it.
+/// Recognises a modifier key pressed twice in a row with nothing else in between, so
+/// Ctrl+C twice, or the key held for a shortcut, is not taken for it.
 #[derive(Default)]
 struct DoubleTap(Tap);
 
 impl DoubleTap {
     /// True on the frame the second press arrives. `other` is any other key or button.
-    fn step(&mut self, now: f64, ctrl: bool, other: bool) -> bool {
-        let spent = if ctrl { Tap::Spent } else { Tap::Idle };
+    fn step(&mut self, now: f64, key: bool, other: bool) -> bool {
+        let spent = if key { Tap::Spent } else { Tap::Idle };
         let (next, fired) = match self.0 {
             _ if other => (spent, false),
-            Tap::Idle if ctrl => (Tap::Down(now), false),
+            Tap::Idle if key => (Tap::Down(now), false),
             Tap::Idle => (Tap::Idle, false),
             // Held too long to be a tap: nothing more comes of it.
             Tap::Down(since) if now - since > TAP_MAX => (spent, false),
-            Tap::Down(_) if !ctrl => (Tap::Up(now), false),
+            Tap::Down(_) if !key => (Tap::Up(now), false),
             Tap::Down(since) => (Tap::Down(since), false),
-            Tap::Up(_) if ctrl => (Tap::Spent, true),
+            Tap::Up(_) if key => (Tap::Spent, true),
             Tap::Up(since) if now - since > TAP_GAP => (Tap::Idle, false),
             Tap::Up(since) => (Tap::Up(since), false),
             Tap::Spent => (spent, false),
@@ -360,14 +360,14 @@ struct Beam {
     closing: Option<Instant>,
 }
 
-/// Shows where the cursor is when Ctrl is pressed twice: a dark halo closes in on it,
+/// Shows where the cursor is when the chosen key is pressed twice: a dark halo closes in on it,
 /// leaving it in a clear, ringed middle. The halo follows the cursor over every monitor,
 /// sized by each one's display scaling, and goes at a click, a key, or a few seconds' rest.
 pub struct FindCursor {
     window: Box<dyn SpriteSink>,
     surface: Surface,
     taps: DoubleTap,
-    ctrl_was: bool,
+    key_was: bool,
     beam: Option<Beam>,
     /// What the surface holds: the middle's and the halo's radius in pixels, and strength.
     drawn: Option<(i32, i32, u32)>,
@@ -380,7 +380,7 @@ impl FindCursor {
             window: sprites(),
             surface: Surface::new(),
             taps: DoubleTap::default(),
-            ctrl_was: false,
+            key_was: false,
             beam: None,
             drawn: None,
             shown_at: None,
@@ -397,20 +397,20 @@ impl FindCursor {
         self.taps.0 != Tap::Idle || self.beam.is_some()
     }
 
-    /// Once a frame. `now` is in seconds; `other` is any key besides Ctrl, `button` any
+    /// Once a frame. `now` is in seconds; `key` is the chosen key, `other` any other, `button` any
     /// mouse button, and `scale_at` the display scaling at a point of the desktop.
     pub fn tick(
         &mut self,
         now: f64,
         cursor: Point,
-        ctrl: bool,
+        key: bool,
         other: bool,
         button: bool,
         scale_at: impl Fn(Point) -> f64,
     ) {
-        let fired = self.taps.step(now, ctrl, other || button);
-        let pressed = ctrl && !self.ctrl_was;
-        self.ctrl_was = ctrl;
+        let fired = self.taps.step(now, key, other || button);
+        let pressed = key && !self.key_was;
+        self.key_was = key;
         match &mut self.beam {
             // Up: any key or click sends it away.
             Some(b) if b.closing.is_none() => {

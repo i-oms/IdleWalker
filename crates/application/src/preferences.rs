@@ -1,7 +1,7 @@
 //! The menu choices that survive between runs: their names, defaults and the checks
 //! that keep a damaged or older value from doing harm. Where they are kept is the
 //! `PreferenceStore` port's business.
-use crate::ports::PreferenceStore;
+use crate::ports::{Modifier, PreferenceStore};
 use idlewalker_domain::prelude::*;
 use std::sync::Arc;
 
@@ -83,6 +83,14 @@ impl Preferences {
         false
     );
     switch!(load_find_cursor, save_find_cursor, "FindCursor", false);
+
+    /// The key that, pressed twice, finds the cursor.
+    pub fn load_find_key(&self) -> Modifier {
+        Modifier::from_i32(self.load("FindCursorKey", 0)).unwrap_or_default()
+    }
+    pub fn save_find_key(&self, key: Modifier) {
+        self.0.save("FindCursorKey", key as i32)
+    }
 
     /// True once "start at sign-in" has been set up, so the default applies only once.
     pub fn startup_decided(&self) -> bool {
