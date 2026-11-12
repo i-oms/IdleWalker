@@ -5,7 +5,7 @@ use super::gfx::{self, button, slider, Canvas, Font, Mouse};
 use super::overlays::DisplayBadges;
 use super::{Services, UserEvent};
 use crate::prelude::*;
-use idlewalker_application::{BrightnessInfo, Desktop, Screen, UpdateState};
+use idlewalker_application::{BrightnessInfo, Desktop, Indicator, Screen, UpdateState};
 use std::collections::HashMap;
 use std::num::NonZeroU32;
 use std::rc::Rc;
@@ -21,8 +21,27 @@ use winit::window::{Window, WindowLevel};
 pub enum Outcome {
     None,
     Close,
-    Dress(i32),
+    /// The colour picker's OK: what was being coloured, and the colour as 0xRRGGBB.
+    Colour(ColourOf, i32),
     Menu(String),
+}
+
+/// What the colour picker is choosing a colour for.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum ColourOf {
+    Dress,
+    Indicator(Indicator),
+}
+
+impl ColourOf {
+    pub fn title(self) -> &'static str {
+        match self {
+            ColourOf::Dress => "Overalls colour",
+            ColourOf::Indicator(Indicator::LeftClick) => "Left click colour",
+            ColourOf::Indicator(Indicator::RightClick) => "Right click colour",
+            ColourOf::Indicator(Indicator::FindRing) => "Find cursor colour",
+        }
+    }
 }
 
 /// Where a tray panel belongs: against the taskbar edge of the screen, whatever height it
@@ -1070,12 +1089,14 @@ impl BrainDialog {
 
 /// A small stand-in for the Windows colour dialog: there is no such thing on every OS.
 pub struct ColourDialog {
+    pub of: ColourOf,
     pub rgb: [i32; 3],
 }
 
 impl ColourDialog {
-    pub fn new(start: i32) -> Self {
+    pub fn new(of: ColourOf, start: i32) -> Self {
         ColourDialog {
+            of,
             rgb: [(start >> 16) & 255, (start >> 8) & 255, start & 255],
         }
     }
@@ -1098,7 +1119,7 @@ impl ColourDialog {
             f,
             left,
             px(12),
-            "Overalls colour",
+            self.of.title(),
             (15.0 * s) as f32,
             gfx::ACCENT,
         );
@@ -1154,7 +1175,7 @@ impl ColourDialog {
         }
         let by = c.h - px(40);
         if button(c, f, m, left + width - px(170), by, px(80), px(28), s, "OK") {
-            return Outcome::Dress(color);
+            return Outcome::Colour(self.of, color);
         }
         if button(
             c,

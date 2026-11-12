@@ -4,7 +4,7 @@
 //! layer calls `tick` once per frame and shows the result.
 use crate::brains::Brains;
 use crate::ports::{Desktop, Displays, Journal, Modifier};
-use crate::preferences::Preferences;
+use crate::preferences::{Indicator, Preferences};
 use idlewalker_domain::prelude::*;
 use std::sync::Arc;
 
@@ -22,6 +22,8 @@ pub struct Choices {
     /// Pressing `find_key` twice shows where the cursor is.
     pub find_cursor: bool,
     pub find_key: Modifier,
+    /// The colour of each cursor indicator, in `Indicator::ALL` order, as 0xRRGGBB.
+    pub indicator_colours: [i32; 3],
     pub startup: bool,
     pub minion_mask: i32,
     pub bird_mask: i32,
@@ -165,6 +167,7 @@ impl Session {
             click_highlight: prefs.load_click_highlight(),
             find_cursor: prefs.load_find_cursor(),
             find_key: prefs.load_find_key(),
+            indicator_colours: Indicator::ALL.map(|i| prefs.load_indicator_colour(i)),
             startup: desktop.startup_is_enabled(),
             minion_mask: troupe.minion_mask(),
             bird_mask: troupe.bird_mask(),
@@ -351,6 +354,12 @@ impl Session {
         let prefs = self.preferences.clone();
         let (name, arg) = id.split_once(':').unwrap_or((id, ""));
         let value: i32 = arg.parse().unwrap_or(0);
+        if let Some(which) = Indicator::ALL.into_iter().find(|i| i.id() == name) {
+            if arg.parse::<i32>().is_ok() {
+                self.choose_indicator_colour(which, value);
+            }
+            return true;
+        }
         match name {
             "walkers" => {
                 self.choices.walkers = !self.choices.walkers;
@@ -467,6 +476,13 @@ impl Session {
             self.troupe.set_dress(chosen);
             self.preferences.save_dress(chosen);
         }
+    }
+
+    /// Colours a cursor indicator, as 0xRRGGBB.
+    pub fn choose_indicator_colour(&mut self, which: Indicator, rgb: i32) {
+        let rgb = rgb & 0xFFFFFF;
+        self.choices.indicator_colours[which as usize] = rgb;
+        self.preferences.save_indicator_colour(which, rgb);
     }
 
     /// Forgets everything the cast learned, in memory and on disk.

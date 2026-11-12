@@ -527,38 +527,59 @@ mod tests {
         assert_eq!(opens.len(), 2);
         assert_eq!(get_string_at(wt, opens[0], &["name"]).as_deref(), Some("a"));
         assert_eq!(get_string_at(wt, opens[1], &["name"]).as_deref(), Some("b"));
-        assert_eq!(get_raw(wt, &["profiles", "defaults", "opacity"]).as_deref(), Some("90"));
+        assert_eq!(
+            get_raw(wt, &["profiles", "defaults", "opacity"]).as_deref(),
+            Some("90")
+        );
         assert_eq!(unquoted("\"a \\\"b\\\"\"").as_deref(), Some("a \"b\""));
         assert_eq!(unquoted("90"), None);
         assert!(objects_in(wt, &["profiles", "defaults"]).is_empty());
         assert!(objects_in("", &["x"]).is_empty());
 
         let set = set_raw_at(wt, opens[1], &["font", "face"], &quoted("F")).unwrap();
-        assert!(set.contains("{ \"font\": { \"face\": \"F\" }, \"name\": \"b\" }"), "{set}");
+        assert!(
+            set.contains("{ \"font\": { \"face\": \"F\" }, \"name\": \"b\" }"),
+            "{set}"
+        );
         let raw = set_raw(wt, &["profiles", "defaults", "opacity"], "50").unwrap();
-        assert_eq!(get_raw(&raw, &["profiles", "defaults", "opacity"]).as_deref(), Some("50"));
+        assert_eq!(
+            get_raw(&raw, &["profiles", "defaults", "opacity"]).as_deref(),
+            Some("50")
+        );
 
         // Removal takes the comma with it, whichever side it is on, and the line when
         // the member had one of its own.
         let gone = remove(wt, &["profiles", "defaults", "fontFace"]).unwrap();
         assert!(gone.contains("\"defaults\": { \"opacity\": 90 }"), "{gone}");
         let last = remove(wt, &["profiles", "defaults", "opacity"]).unwrap();
-        assert!(last.contains("\"defaults\": { \"fontFace\": \"Cascadia Code\" }"), "{last}");
+        assert!(
+            last.contains("\"defaults\": { \"fontFace\": \"Cascadia Code\" }"),
+            "{last}"
+        );
         let lines = "{\n    \"k\": \"v\",\n    \"a\": 1\n}\n";
         assert_eq!(remove(lines, &["k"]).unwrap(), "{\n    \"a\": 1\n}\n");
         assert_eq!(remove(lines, &["a"]).unwrap(), "{\n    \"k\": \"v\"\n}\n");
         assert_eq!(remove(lines, &["missing"]).unwrap(), lines);
         assert_eq!(remove("", &["a"]).unwrap(), "");
         let inner = remove_at(wt, opens[0], &["font", "face"]).unwrap();
-        assert!(inner.contains("{ \"name\": \"a\", \"font\": {  } }"), "{inner}");
+        assert!(
+            inner.contains("{ \"name\": \"a\", \"font\": {  } }"),
+            "{inner}"
+        );
 
         // A file with Windows line endings keeps them, and comes back as it was.
         let crlf = "{\r\n    \"a\": 1,\r\n    \"o\": {}\r\n}\r\n";
         let set = set_raw(crlf, &["k"], "true").unwrap();
-        assert_eq!(set, "{\r\n    \"k\": true,\r\n    \"a\": 1,\r\n    \"o\": {}\r\n}\r\n");
+        assert_eq!(
+            set,
+            "{\r\n    \"k\": true,\r\n    \"a\": 1,\r\n    \"o\": {}\r\n}\r\n"
+        );
         assert_eq!(remove(&set, &["k"]).unwrap(), crlf);
         let deep = set_raw(crlf, &["o", "k"], "1").unwrap();
-        assert!(deep.contains("\"o\": {\r\n        \"k\": 1\r\n    }"), "{deep:?}");
+        assert!(
+            deep.contains("\"o\": {\r\n        \"k\": 1\r\n    }"),
+            "{deep:?}"
+        );
     }
 
     #[test]

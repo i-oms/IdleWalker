@@ -587,11 +587,14 @@ fn edit(out: &mut Vec<Edit>, section: &str, key: &str, value: impl Into<String>)
     out.push((section.to_string(), key.to_string(), value.into()));
 }
 
-const ANSI_NAMES: [&str; 8] = ["black", "red", "green", "yellow", "blue", "magenta", "cyan", "white"];
+const ANSI_NAMES: [&str; 8] = [
+    "black", "red", "green", "yellow", "blue", "magenta", "cyan", "white",
+];
 
 fn capitalised(s: &str) -> String {
     let mut c = s.chars();
-    c.next().map_or(String::new(), |f| f.to_uppercase().chain(c).collect())
+    c.next()
+        .map_or(String::new(), |f| f.to_uppercase().chain(c).collect())
 }
 
 fn bgr(colour: &str) -> u32 {
@@ -609,15 +612,35 @@ fn vscode_edits(look: &Look) -> Vec<Edit> {
         edit(&mut e, "", "terminal.integrated.fontSize", n.to_string());
     }
     if let Some(c) = look.cursor {
-        edit(&mut e, "", "terminal.integrated.cursorStyle", jsonc::quoted(c.pick(["block", "line", "underline"])));
+        edit(
+            &mut e,
+            "",
+            "terminal.integrated.cursorStyle",
+            jsonc::quoted(c.pick(["block", "line", "underline"])),
+        );
     }
     if let Some(l) = look.ligatures {
-        edit(&mut e, "", "terminal.integrated.fontLigatures.enabled", l.to_string());
+        edit(
+            &mut e,
+            "",
+            "terminal.integrated.fontLigatures.enabled",
+            l.to_string(),
+        );
     }
     if let Some(p) = look.colours.and_then(|i| PALETTES.get(i)) {
         let group = "workbench.colorCustomizations";
-        edit(&mut e, group, "terminal.foreground", jsonc::quoted(p.foreground));
-        edit(&mut e, group, "terminal.background", jsonc::quoted(p.background));
+        edit(
+            &mut e,
+            group,
+            "terminal.foreground",
+            jsonc::quoted(p.foreground),
+        );
+        edit(
+            &mut e,
+            group,
+            "terminal.background",
+            jsonc::quoted(p.background),
+        );
         for (i, c) in p.ansi.iter().enumerate() {
             let bright = if i >= 8 { "Bright" } else { "" };
             let key = format!("terminal.ansi{bright}{}", capitalised(ANSI_NAMES[i % 8]));
@@ -660,10 +683,20 @@ fn xfce_edits(look: &Look) -> Vec<Edit> {
     }
     if let Some(c) = look.cursor {
         let name = c.pick(["BLOCK", "IBEAM", "UNDERLINE"]);
-        edit(&mut e, s, "MiscCursorShape", format!("TERMINAL_CURSOR_SHAPE_{name}"));
+        edit(
+            &mut e,
+            s,
+            "MiscCursorShape",
+            format!("TERMINAL_CURSOR_SHAPE_{name}"),
+        );
     }
     if let Some(o) = look.opacity {
-        edit(&mut e, s, "BackgroundMode", "TERMINAL_BACKGROUND_TRANSPARENT");
+        edit(
+            &mut e,
+            s,
+            "BackgroundMode",
+            "TERMINAL_BACKGROUND_TRANSPARENT",
+        );
         edit(&mut e, s, "BackgroundDarkness", opacity_01(o));
     }
     if let Some(p) = look.colours.and_then(|i| PALETTES.get(i)) {
@@ -683,7 +716,10 @@ fn gsettings_edits(kind: TerminalKind, look: &Look) -> Vec<(String, String)> {
         put("font", format!("{FONT_NAME} {n}"));
     }
     if let Some(c) = look.cursor {
-        put("cursor-shape", c.pick(["block", "ibeam", "underline"]).into());
+        put(
+            "cursor-shape",
+            c.pick(["block", "ibeam", "underline"]).into(),
+        );
     }
     if let Some(o) = look.opacity {
         match kind {
@@ -729,9 +765,16 @@ fn konsole_scheme(p: &Palette, opacity: Option<u32>) -> String {
     }
     for i in 0..8 {
         out.push_str(&format!("[Color{i}]\nColor={}\n\n", rgb(p.ansi[i])));
-        out.push_str(&format!("[Color{i}Intense]\nColor={}\n\n", rgb(p.ansi[i + 8])));
+        out.push_str(&format!(
+            "[Color{i}Intense]\nColor={}\n\n",
+            rgb(p.ansi[i + 8])
+        ));
     }
-    out.push_str(&format!("[General]\nDescription=IdleWalker {}\nOpacity={}\n", p.name, opacity_01(opacity.unwrap_or(100))));
+    out.push_str(&format!(
+        "[General]\nDescription=IdleWalker {}\nOpacity={}\n",
+        p.name,
+        opacity_01(opacity.unwrap_or(100))
+    ));
     out
 }
 
@@ -741,7 +784,12 @@ fn ghostty_edits(look: &Look) -> Vec<Edit> {
         edit(&mut e, "", "font-size", n.to_string());
     }
     if let Some(c) = look.cursor {
-        edit(&mut e, "", "cursor-style", c.pick(["block", "bar", "underline"]));
+        edit(
+            &mut e,
+            "",
+            "cursor-style",
+            c.pick(["block", "bar", "underline"]),
+        );
     }
     if let Some(o) = look.opacity {
         edit(&mut e, "", "background-opacity", opacity_01(o));
@@ -753,7 +801,10 @@ fn ghostty_edits(look: &Look) -> Vec<Edit> {
 }
 
 fn ghostty_theme(p: &Palette) -> String {
-    let mut out = format!("background = {}\nforeground = {}\n", p.background, p.foreground);
+    let mut out = format!(
+        "background = {}\nforeground = {}\n",
+        p.background, p.foreground
+    );
     for (i, c) in p.ansi.iter().enumerate() {
         out.push_str(&format!("palette = {i}={c}\n"));
     }
@@ -771,13 +822,23 @@ fn look_edits(name: &str, look: &Look) -> Option<(Shape, Vec<Edit>)> {
                 edit(&mut e, "", "font_size", n.to_string());
             }
             if let Some(c) = look.cursor {
-                edit(&mut e, "", "cursor_shape", c.pick(["block", "beam", "underline"]));
+                edit(
+                    &mut e,
+                    "",
+                    "cursor_shape",
+                    c.pick(["block", "beam", "underline"]),
+                );
             }
             if let Some(o) = look.opacity {
                 edit(&mut e, "", "background_opacity", opacity_01(o));
             }
             if let Some(l) = look.ligatures {
-                edit(&mut e, "", "disable_ligatures", if l { "never" } else { "always" });
+                edit(
+                    &mut e,
+                    "",
+                    "disable_ligatures",
+                    if l { "never" } else { "always" },
+                );
             }
             if let Some(p) = pal {
                 edit(&mut e, "", "foreground", p.foreground);
@@ -793,16 +854,35 @@ fn look_edits(name: &str, look: &Look) -> Option<(Shape, Vec<Edit>)> {
                 edit(&mut e, "font", "size", n.to_string());
             }
             if let Some(c) = look.cursor {
-                edit(&mut e, "cursor.style", "shape", jsonc::quoted(c.pick(["Block", "Beam", "Underline"])));
+                edit(
+                    &mut e,
+                    "cursor.style",
+                    "shape",
+                    jsonc::quoted(c.pick(["Block", "Beam", "Underline"])),
+                );
             }
             if let Some(o) = look.opacity {
                 edit(&mut e, "window", "opacity", opacity_01(o));
             }
             if let Some(p) = pal {
-                edit(&mut e, "colors.primary", "foreground", jsonc::quoted(p.foreground));
-                edit(&mut e, "colors.primary", "background", jsonc::quoted(p.background));
+                edit(
+                    &mut e,
+                    "colors.primary",
+                    "foreground",
+                    jsonc::quoted(p.foreground),
+                );
+                edit(
+                    &mut e,
+                    "colors.primary",
+                    "background",
+                    jsonc::quoted(p.background),
+                );
                 for (i, c) in p.ansi.iter().enumerate() {
-                    let table = if i < 8 { "colors.normal" } else { "colors.bright" };
+                    let table = if i < 8 {
+                        "colors.normal"
+                    } else {
+                        "colors.bright"
+                    };
                     edit(&mut e, table, ANSI_NAMES[i % 8], jsonc::quoted(c));
                 }
             }
@@ -813,7 +893,12 @@ fn look_edits(name: &str, look: &Look) -> Option<(Shape, Vec<Edit>)> {
                 edit(&mut e, "terminal", "fontSize", n.to_string());
             }
             if let Some(c) = look.cursor {
-                edit(&mut e, "terminal", "cursor", c.pick(["block", "beam", "underline"]));
+                edit(
+                    &mut e,
+                    "terminal",
+                    "cursor",
+                    c.pick(["block", "beam", "underline"]),
+                );
             }
             if let Some(l) = look.ligatures {
                 edit(&mut e, "terminal", "ligatures", l.to_string());
@@ -828,16 +913,35 @@ fn look_edits(name: &str, look: &Look) -> Option<(Shape, Vec<Edit>)> {
                 edit(&mut e, "main", "font", format!("{FONT_NAME}:size={n}"));
             }
             if let Some(c) = look.cursor {
-                edit(&mut e, "cursor", "style", c.pick(["block", "beam", "underline"]));
+                edit(
+                    &mut e,
+                    "cursor",
+                    "style",
+                    c.pick(["block", "beam", "underline"]),
+                );
             }
             if let Some(o) = look.opacity {
                 edit(&mut e, "colors", "alpha", opacity_01(o));
             }
             if let Some(p) = pal {
-                edit(&mut e, "colors", "foreground", p.foreground.trim_start_matches('#'));
-                edit(&mut e, "colors", "background", p.background.trim_start_matches('#'));
+                edit(
+                    &mut e,
+                    "colors",
+                    "foreground",
+                    p.foreground.trim_start_matches('#'),
+                );
+                edit(
+                    &mut e,
+                    "colors",
+                    "background",
+                    p.background.trim_start_matches('#'),
+                );
                 for (i, c) in p.ansi.iter().enumerate() {
-                    let key = if i < 8 { format!("regular{i}") } else { format!("bright{}", i - 8) };
+                    let key = if i < 8 {
+                        format!("regular{i}")
+                    } else {
+                        format!("bright{}", i - 8)
+                    };
                     edit(&mut e, "colors", &key, c.trim_start_matches('#'));
                 }
             }
@@ -848,7 +952,12 @@ fn look_edits(name: &str, look: &Look) -> Option<(Shape, Vec<Edit>)> {
                 edit(&mut e, "terminal", "font_size", n.to_string());
             }
             if let Some(c) = look.cursor {
-                edit(&mut e, "terminal", "cursor_shape", jsonc::quoted(c.pick(["block", "bar", "underline"])));
+                edit(
+                    &mut e,
+                    "terminal",
+                    "cursor_shape",
+                    jsonc::quoted(c.pick(["block", "bar", "underline"])),
+                );
             }
             Shape::Json
         }
@@ -857,7 +966,12 @@ fn look_edits(name: &str, look: &Look) -> Option<(Shape, Vec<Edit>)> {
                 edit(&mut e, "", "term:fontsize", n.to_string());
             }
             if let Some(c) = look.cursor {
-                edit(&mut e, "", "term:cursor", jsonc::quoted(c.pick(["block", "bar", "underline"])));
+                edit(
+                    &mut e,
+                    "",
+                    "term:cursor",
+                    jsonc::quoted(c.pick(["block", "bar", "underline"])),
+                );
             }
             if let Some(o) = look.opacity {
                 edit(&mut e, "", "term:transparency", opacity_01(100 - o));
@@ -869,7 +983,12 @@ fn look_edits(name: &str, look: &Look) -> Option<(Shape, Vec<Edit>)> {
                 edit(&mut e, "", "FontHeight", n.to_string());
             }
             if let Some(c) = look.cursor {
-                edit(&mut e, "", "CursorType", c.pick(["block", "line", "underscore"]));
+                edit(
+                    &mut e,
+                    "",
+                    "CursorType",
+                    c.pick(["block", "line", "underscore"]),
+                );
             }
             if let Some(o) = look.opacity {
                 let level = match o {
@@ -904,7 +1023,10 @@ fn look_edits(name: &str, look: &Look) -> Option<(Shape, Vec<Edit>)> {
 /// the font.
 fn iterm_dynamic_fonts(text: &str) -> Vec<(usize, &'static str, String)> {
     let mut out = Vec::new();
-    for (i, open) in jsonc::objects_in(text, &["Profiles"]).into_iter().enumerate() {
+    for (i, open) in jsonc::objects_in(text, &["Profiles"])
+        .into_iter()
+        .enumerate()
+    {
         for key in ["Normal Font", "Non Ascii Font"] {
             if let Some(v) = jsonc::get_string_at(text, open, &[key]) {
                 out.push((i, key, v));
@@ -1341,9 +1463,7 @@ impl Posh {
     /// A macOS application, in either Applications folder.
     fn mac_app(&self, name: &str) -> bool {
         self.ws.exists(&PathBuf::from("/Applications").join(name))
-            || self
-                .ws
-                .exists(&self.home().join("Applications").join(name))
+            || self.ws.exists(&self.home().join("Applications").join(name))
     }
 
     fn run(&self, program: &Path, args: &[&str]) -> RunResult {
@@ -1366,7 +1486,10 @@ impl Posh {
         );
         for (name, text) in [("stdout", &r.stdout), ("stderr", &r.stderr)] {
             if !text.trim().is_empty() {
-                line.push_str(&format!("\n  {name}:\n    {}", debug_clip(text).replace('\n', "\n    ")));
+                line.push_str(&format!(
+                    "\n  {name}:\n    {}",
+                    debug_clip(text).replace('\n', "\n    ")
+                ));
             }
         }
         self.note(line);
@@ -1610,7 +1733,10 @@ impl Posh {
                 (Shell::Wsl, self.wsl_program()),
                 (
                     Shell::Elvish,
-                    self.program("elvish", vec![home.join("scoop").join("shims").join("elvish.exe")]),
+                    self.program(
+                        "elvish",
+                        vec![home.join("scoop").join("shims").join("elvish.exe")],
+                    ),
                 ),
                 (
                     Shell::Xonsh,
@@ -1687,7 +1813,10 @@ impl Posh {
                     Shell::Yash,
                     self.program(
                         "yash",
-                        vec!["/opt/homebrew/bin/yash".into(), "/usr/local/bin/yash".into()],
+                        vec![
+                            "/opt/homebrew/bin/yash".into(),
+                            "/usr/local/bin/yash".into(),
+                        ],
                     ),
                 ),
             ],
@@ -1736,12 +1865,18 @@ impl Posh {
                     Shell::Xonsh,
                     self.program(
                         "xonsh",
-                        vec!["/usr/bin/xonsh".into(), home.join(".local").join("bin").join("xonsh")],
+                        vec![
+                            "/usr/bin/xonsh".into(),
+                            home.join(".local").join("bin").join("xonsh"),
+                        ],
                     ),
                 ),
                 (
                     Shell::Yash,
-                    self.program("yash", vec!["/usr/bin/yash".into(), "/usr/local/bin/yash".into()]),
+                    self.program(
+                        "yash",
+                        vec!["/usr/bin/yash".into(), "/usr/local/bin/yash".into()],
+                    ),
                 ),
             ],
         }
@@ -1789,17 +1924,24 @@ impl Posh {
             Shell::Fish => self.config_home().join("fish").join("config.fish"),
             // Clink's profile folder, one of the places it loads every .lua from.
             Shell::Cmd => self.local_app_data().join("clink").join("oh-my-posh.lua"),
-            Shell::Nu => asked(&["-c", "$nu.config-path"]).unwrap_or_else(|| {
-                self.nu_config_dir(&home).join("config.nu")
-            }),
+            Shell::Nu => asked(&["-c", "$nu.config-path"])
+                .unwrap_or_else(|| self.nu_config_dir(&home).join("config.nu")),
             Shell::Elvish => self.elvish_rc(&home),
             Shell::Xonsh => home.join(".xonshrc"),
             Shell::Msys2Bash => self.msys_home().join(".bashrc"),
             Shell::Msys2Zsh => self.msys_home().join(".zshrc"),
-            Shell::Msys2Fish => self.msys_home().join(".config").join("fish").join("config.fish"),
+            Shell::Msys2Fish => self
+                .msys_home()
+                .join(".config")
+                .join("fish")
+                .join("config.fish"),
             Shell::CygwinBash => self.cygwin_home().join(".bashrc"),
             Shell::CygwinZsh => self.cygwin_home().join(".zshrc"),
-            Shell::CygwinFish => self.cygwin_home().join(".config").join("fish").join("config.fish"),
+            Shell::CygwinFish => self
+                .cygwin_home()
+                .join(".config")
+                .join("fish")
+                .join("config.fish"),
             // A record of the block; the shells inside the distros hold the real thing.
             Shell::Wsl => self.ws.app_dir().join(WSL_RECORD),
             Shell::Yash => home.join(".yashrc"),
@@ -1810,8 +1952,17 @@ impl Posh {
     fn git_shell(&self, name: &str) -> Option<PathBuf> {
         let exe = format!("{name}.exe");
         self.first_existing(vec![
-            self.program_files().join("Git").join("usr").join("bin").join(&exe),
-            self.local_app_data().join("Programs").join("Git").join("usr").join("bin").join(&exe),
+            self.program_files()
+                .join("Git")
+                .join("usr")
+                .join("bin")
+                .join(&exe),
+            self.local_app_data()
+                .join("Programs")
+                .join("Git")
+                .join("usr")
+                .join("bin")
+                .join(&exe),
         ])
         .or_else(|| {
             self.ws.find_program(name).filter(|p| {
@@ -1826,10 +1977,18 @@ impl Posh {
             PathBuf::from(r"C:\msys64"),
             PathBuf::from(r"C:\msys32"),
             PathBuf::from(r"C:\tools\msys64"),
-            self.home().join("scoop").join("apps").join("msys2").join("current"),
+            self.home()
+                .join("scoop")
+                .join("apps")
+                .join("msys2")
+                .join("current"),
         ]
         .into_iter()
-        .chain(self.ws.find_program("msys2_shell").and_then(|p| p.parent().map(Path::to_path_buf)))
+        .chain(
+            self.ws
+                .find_program("msys2_shell")
+                .and_then(|p| p.parent().map(Path::to_path_buf)),
+        )
         .find(|r| {
             let bin = r.join("usr").join("bin");
             self.ws.exists(&bin.join("bash.exe")) || self.ws.exists(&bin.join("mintty.exe"))
@@ -1868,7 +2027,11 @@ impl Posh {
         self.ws
             .env("USERNAME")
             .filter(|u| !u.is_empty())
-            .or_else(|| self.home().file_name().map(|n| n.to_string_lossy().into_owned()))
+            .or_else(|| {
+                self.home()
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+            })
             .unwrap_or_default()
     }
 
@@ -1925,7 +2088,9 @@ impl Posh {
             };
             let unix_theme = theme.and_then(|t| self.wsl_path(wsl, &distro, t));
             if theme.is_some() && unix_theme.is_none() {
-                log.push(format!("{distro}: the theme could not be reached; left alone."));
+                log.push(format!(
+                    "{distro}: the theme could not be reached; left alone."
+                ));
                 continue;
             }
             if let Err(e) = self.ws.write_text(&file, &make(unix_theme.as_deref())) {
@@ -2093,10 +2258,7 @@ impl Posh {
                       [System.Drawing.FontFamily]::Families | Where-Object { \
                       $_.Name -like '*Meslo*' -or $_.Name -like '*Nerd Font*' } | \
                       ForEach-Object { $_.Name } } catch { }";
-        let r = self.run(
-            &ps,
-            &["-NoProfile", "-NonInteractive", "-Command", script],
-        );
+        let r = self.run(&ps, &["-NoProfile", "-NonInteractive", "-Command", script]);
         if !r.success {
             self.note(format!("font-family probe: powershell did not succeed"));
             return Vec::new();
@@ -2172,7 +2334,10 @@ impl Posh {
                 for (name, there, how) in [
                     (
                         "Fluent Terminal",
-                        self.ws.exists(&lad.join("Packages").join("53621FSApps.FluentTerminal_87x1pks76srcp")),
+                        self.ws.exists(
+                            &lad.join("Packages")
+                                .join("53621FSApps.FluentTerminal_87x1pks76srcp"),
+                        ),
                         "set it in its Settings, under Terminal",
                     ),
                     (
@@ -2183,13 +2348,18 @@ impl Posh {
                     ),
                     (
                         "Xshell",
-                        self.ws.exists(&x86.join("NetSarang")) || self.ws.exists(&self.program_files().join("NetSarang")),
+                        self.ws.exists(&x86.join("NetSarang"))
+                            || self.ws.exists(&self.program_files().join("NetSarang")),
                         "set it in each session's Appearance",
                     ),
                     (
                         "SecureCRT",
-                        self.ws.exists(&self.program_files().join("VanDyke Software").join("SecureCRT"))
-                            || self.ws.exists(&self.app_data().join("VanDyke")),
+                        self.ws.exists(
+                            &self
+                                .program_files()
+                                .join("VanDyke Software")
+                                .join("SecureCRT"),
+                        ) || self.ws.exists(&self.app_data().join("VanDyke")),
                         "set it in each session's Appearance",
                     ),
                     (
@@ -2202,7 +2372,10 @@ impl Posh {
                         out.push(by_hand(name, how));
                     }
                 }
-                if self.ws.exists(&self.local_app_data().join("Microsoft").join("VisualStudio")) {
+                if self
+                    .ws
+                    .exists(&self.local_app_data().join("Microsoft").join("VisualStudio"))
+                {
                     out.push(by_hand(
                         "Visual Studio",
                         "set it in Tools > Options > Environment > Fonts and Colors > Terminal",
@@ -2249,10 +2422,34 @@ impl Posh {
             let flatpak = home.join(".var").join("app");
             let snap = home.join("snap");
             let packaged = [
-                ("VS Code (Flatpak)", flatpak.join("com.visualstudio.code").join("config").join("Code")),
-                ("VSCodium (Flatpak)", flatpak.join("com.vscodium.codium").join("config").join("VSCodium")),
-                ("VS Code (Snap)", snap.join("code").join("current").join(".config").join("Code")),
-                ("VSCodium (Snap)", snap.join("codium").join("current").join(".config").join("VSCodium")),
+                (
+                    "VS Code (Flatpak)",
+                    flatpak
+                        .join("com.visualstudio.code")
+                        .join("config")
+                        .join("Code"),
+                ),
+                (
+                    "VSCodium (Flatpak)",
+                    flatpak
+                        .join("com.vscodium.codium")
+                        .join("config")
+                        .join("VSCodium"),
+                ),
+                (
+                    "VS Code (Snap)",
+                    snap.join("code")
+                        .join("current")
+                        .join(".config")
+                        .join("Code"),
+                ),
+                (
+                    "VSCodium (Snap)",
+                    snap.join("codium")
+                        .join("current")
+                        .join(".config")
+                        .join("VSCodium"),
+                ),
             ];
             for (name, dir) in packaged {
                 self.push_vscode(out, name, &dir.join("User"));
@@ -2334,7 +2531,10 @@ impl Posh {
     /// VS Code and VSCodium unpacked somewhere with a `data` folder beside them.
     fn vscode_portable(&self, out: &mut Vec<TerminalStatus>) {
         let portable = |root: PathBuf| root.join("data").join("user-data").join("User");
-        for (program, name) in [("code", "VS Code (portable)"), ("codium", "VSCodium (portable)")] {
+        for (program, name) in [
+            ("code", "VS Code (portable)"),
+            ("codium", "VSCodium (portable)"),
+        ] {
             let root = self
                 .ws
                 .find_program(program)
@@ -2344,8 +2544,14 @@ impl Posh {
             }
         }
         if self.os() == Os::MacOs {
-            for dir in [PathBuf::from("/Applications"), self.home().join("Applications")] {
-                let user = dir.join("code-portable-data").join("user-data").join("User");
+            for dir in [
+                PathBuf::from("/Applications"),
+                self.home().join("Applications"),
+            ] {
+                let user = dir
+                    .join("code-portable-data")
+                    .join("user-data")
+                    .join("User");
                 self.push_vscode(out, "VS Code (portable)", &user);
             }
         }
@@ -2470,9 +2676,7 @@ impl Posh {
         if names.is_empty() {
             names.push(default_profile.clone());
         }
-        let mut font_set = names
-            .iter()
-            .all(|n| apple_terminal_font_is_nerd(&plist, n));
+        let mut font_set = names.iter().all(|n| apple_terminal_font_is_nerd(&plist, n));
         // Terminal keeps a change made through AppleScript in its own copy of the
         // settings while it runs, and writes the file later. So once the font has
         // been applied, and Terminal is running, Terminal itself is asked. Not
@@ -2516,7 +2720,10 @@ impl Posh {
             out.push(by_hand("Termius", "set it in Settings > Terminal"));
         }
         if self.mac_app("contour.app") {
-            out.push(by_hand("Contour", "set font.regular.family in each profile of contour.yml"));
+            out.push(by_hand(
+                "Contour",
+                "set font.regular.family in each profile of contour.yml",
+            ));
         }
     }
 
@@ -2568,8 +2775,8 @@ impl Posh {
         let xfce = self.xfce_rc();
         if self.ws.exists(&xfce) || self.ws.find_program("xfce4-terminal").is_some() {
             let text = self.ws.read_text(&xfce).unwrap_or_default();
-            let font = ini_get(&text, "Configuration", "FontName")
-                .is_some_and(|f| is_nerd_font(&f));
+            let font =
+                ini_get(&text, "Configuration", "FontName").is_some_and(|f| is_nerd_font(&f));
             let own = ini_get(&text, "Configuration", "FontUseSystem")
                 .is_none_or(|v| !v.eq_ignore_ascii_case("true"));
             out.push(TerminalStatus {
@@ -2621,7 +2828,10 @@ impl Posh {
             || match os {
                 Os::Windows => self
                     .first_existing(vec![
-                        self.local_app_data().join("Programs").join("Tabby").join("Tabby.exe"),
+                        self.local_app_data()
+                            .join("Programs")
+                            .join("Tabby")
+                            .join("Tabby.exe"),
                         self.program_files().join("Tabby").join("Tabby.exe"),
                     ])
                     .is_some(),
@@ -2753,7 +2963,10 @@ impl Posh {
         }
         // mintty, once per environment that ships it: each reads its own home's .minttyrc,
         // which overrides every other file it looks at.
-        let has_mintty = |dir: &PathBuf| self.ws.exists(&dir.join("usr").join("bin").join("mintty.exe"));
+        let has_mintty = |dir: &PathBuf| {
+            self.ws
+                .exists(&dir.join("usr").join("bin").join("mintty.exe"))
+        };
         let git_dir = self
             .ws
             .find_program("git")
@@ -2773,10 +2986,20 @@ impl Posh {
         }
         let user = self.windows_user();
         if let Some(root) = self.msys_root() {
-            self.push_file(out, "MSYS2 (mintty)", root.join("home").join(&user).join(".minttyrc"), true);
+            self.push_file(
+                out,
+                "MSYS2 (mintty)",
+                root.join("home").join(&user).join(".minttyrc"),
+                true,
+            );
         }
         if let Some(root) = self.cygwin_root() {
-            self.push_file(out, "Cygwin (mintty)", root.join("home").join(&user).join(".minttyrc"), true);
+            self.push_file(
+                out,
+                "Cygwin (mintty)",
+                root.join("home").join(&user).join(".minttyrc"),
+                true,
+            );
         }
         let wsltty = self
             .local_app_data()
@@ -2784,13 +3007,20 @@ impl Posh {
             .join("bin")
             .join("mintty.exe");
         if self.ws.exists(&wsltty) {
-            self.push_file(out, "wsltty", self.app_data().join("wsltty").join("config"), true);
+            self.push_file(
+                out,
+                "wsltty",
+                self.app_data().join("wsltty").join("config"),
+                true,
+            );
         }
     }
 
     /// The keys right under a registry key, with their values.
     fn reg_children(&self, reg: &Path, base: &str) -> Vec<RegKey> {
-        let text = self.ask_all(reg, &["query", base, "/s"]).unwrap_or_default();
+        let text = self
+            .ask_all(reg, &["query", base, "/s"])
+            .unwrap_or_default();
         reg_parse(&text)
             .into_iter()
             .filter(|k| {
@@ -2856,69 +3086,121 @@ impl Posh {
             config.join("qterminal.org").join("qterminal.ini"),
             found("qterminal"),
         );
-        self.push_file(out, "Sakura", config.join("sakura").join("sakura.conf"), found("sakura"));
+        self.push_file(
+            out,
+            "Sakura",
+            config.join("sakura").join("sakura.conf"),
+            found("sakura"),
+        );
         self.push_file(
             out,
             "Deepin Terminal",
-            config.join("deepin").join("deepin-terminal").join("config.conf"),
+            config
+                .join("deepin")
+                .join("deepin-terminal")
+                .join("config.conf"),
             found("deepin-terminal"),
         );
-        self.push_file(out, "foot", config.join("foot").join("foot.ini"), found("foot"));
+        self.push_file(
+            out,
+            "foot",
+            config.join("foot").join("foot.ini"),
+            found("foot"),
+        );
         // Tilda has a settings file for each window it runs.
         let tilda_dir = config.join("tilda");
         let mut tildas: Vec<PathBuf> = self
             .ws
             .list_files(&tilda_dir, 1)
             .into_iter()
-            .filter(|f| f.file_name().is_some_and(|n| n.to_string_lossy().starts_with("config_")))
+            .filter(|f| {
+                f.file_name()
+                    .is_some_and(|n| n.to_string_lossy().starts_with("config_"))
+            })
             .collect();
         tildas.sort();
         if tildas.is_empty() && found("tilda") {
             tildas.push(tilda_dir.join("config_0"));
         }
         for (i, file) in tildas.into_iter().enumerate() {
-            let name = if i == 0 { "Tilda".to_string() } else { format!("Tilda #{}", i + 1) };
+            let name = if i == 0 {
+                "Tilda".to_string()
+            } else {
+                format!("Tilda #{}", i + 1)
+            };
             self.push_file(out, &name, file, true);
         }
         self.push_file(
             out,
             "COSMIC Terminal",
-            config.join("cosmic").join("com.system76.CosmicTerm").join("v1").join("font_name"),
+            config
+                .join("cosmic")
+                .join("com.system76.CosmicTerm")
+                .join("v1")
+                .join("font_name"),
             found("cosmic-term"),
         );
         if found("terminology") || self.ws.exists(&config.join("terminology")) {
-            out.push(by_hand("Terminology", "set it in its own settings, under Font"));
+            out.push(by_hand(
+                "Terminology",
+                "set it in its own settings, under Font",
+            ));
         }
         if found("st") {
-            out.push(by_hand("st", "its font is chosen when it is compiled, in config.h"));
+            out.push(by_hand(
+                "st",
+                "its font is chosen when it is compiled, in config.h",
+            ));
         }
         let mut roxterm = self
             .ws
             .list_files(&config.join("roxterm.sourceforge.net").join("Profiles"), 1);
         roxterm.sort();
         for (i, file) in roxterm.into_iter().enumerate() {
-            let name = if i == 0 { "ROXTerm".to_string() } else { format!("ROXTerm #{}", i + 1) };
+            let name = if i == 0 {
+                "ROXTerm".to_string()
+            } else {
+                format!("ROXTerm #{}", i + 1)
+            };
             self.push_file(out, &name, file, true);
         }
-        self.push_file(out, "LilyTerm", config.join("lilyterm").join("default.conf"), found("lilyterm"));
+        self.push_file(
+            out,
+            "LilyTerm",
+            config.join("lilyterm").join("default.conf"),
+            found("lilyterm"),
+        );
         let flatpak = self.home().join(".var").join("app");
         for (name, app) in [
             ("Ptyxis (Flatpak)", "app.devsuite.Ptyxis"),
             ("Black Box (Flatpak)", "com.raggesilver.BlackBox"),
         ] {
             let dir = flatpak.join(app);
-            let keyfile = dir.join("config").join("glib-2.0").join("settings").join("keyfile");
+            let keyfile = dir
+                .join("config")
+                .join("glib-2.0")
+                .join("settings")
+                .join("keyfile");
             let there = self.ws.exists(&dir);
             self.push_file(out, name, keyfile, there);
         }
         if found("mlterm") || self.ws.exists(&self.home().join(".mlterm")) {
-            out.push(by_hand("mlterm", "set it in ~/.mlterm/aafont, with type_engine=cairo in ~/.mlterm/main"));
+            out.push(by_hand(
+                "mlterm",
+                "set it in ~/.mlterm/aafont, with type_engine=cairo in ~/.mlterm/main",
+            ));
         }
         if found("contour") || self.ws.exists(&config.join("contour")) {
-            out.push(by_hand("Contour", "set font.regular.family in each profile of contour.yml"));
+            out.push(by_hand(
+                "Contour",
+                "set font.regular.family in each profile of contour.yml",
+            ));
         }
         if found("cool-retro-term") {
-            out.push(by_hand("cool-retro-term", "it offers only its own retro fonts"));
+            out.push(by_hand(
+                "cool-retro-term",
+                "it offers only its own retro fonts",
+            ));
         }
         // xterm and urxvt read X resources from the file already there.
         let xres = self.xresources();
@@ -3088,7 +3370,11 @@ impl Posh {
             return;
         };
         let text = self.ws.read_text(&path).unwrap_or_default();
-        let text = if r.name == "foot" { foot_main(&text) } else { text };
+        let text = if r.name == "foot" {
+            foot_main(&text)
+        } else {
+            text
+        };
         out.push(TerminalStatus {
             name: name.into(),
             kind: TerminalKind::File,
@@ -3732,7 +4018,10 @@ impl Posh {
                 TerminalKind::Alacritty => self.alacritty_apply(&t, &mut changes, log),
                 TerminalKind::Tabby => self.tabby_apply(&t, &mut changes, log),
                 TerminalKind::BuiltIn => {
-                    log.push(format!("{}: has the icons built in; nothing to set.", t.name));
+                    log.push(format!(
+                        "{}: has the icons built in; nothing to set.",
+                        t.name
+                    ));
                     false
                 }
                 TerminalKind::ByHand => {
@@ -3777,7 +4066,12 @@ impl Posh {
         }
     }
 
-    fn vscode_apply(&self, t: &TerminalStatus, changes: &mut Changes, log: &mut Vec<String>) -> bool {
+    fn vscode_apply(
+        &self,
+        t: &TerminalStatus,
+        changes: &mut Changes,
+        log: &mut Vec<String>,
+    ) -> bool {
         let path = PathBuf::from(&t.target);
         let Some(text) = self.settings_text(&t.name, &path, log) else {
             return false;
@@ -3843,11 +4137,8 @@ impl Posh {
     }
 
     fn reg_add(&self, reg: &Path, key: &str, name: &str, ty: &str, data: &str) -> bool {
-        self.run(
-            reg,
-            &["add", key, "/v", name, "/t", ty, "/d", data, "/f"],
-        )
-        .success
+        self.run(reg, &["add", key, "/v", name, "/t", ty, "/d", data, "/f"])
+            .success
     }
 
     fn reg_delete(&self, reg: &Path, key: &str, name: &str) -> bool {
@@ -3908,7 +4199,12 @@ impl Posh {
         ok
     }
 
-    fn gsettings_apply(&self, t: &TerminalStatus, changes: &mut Changes, log: &mut Vec<String>) -> bool {
+    fn gsettings_apply(
+        &self,
+        t: &TerminalStatus,
+        changes: &mut Changes,
+        log: &mut Vec<String>,
+    ) -> bool {
         let Some(gsettings) = self.ws.find_program("gsettings") else {
             return false;
         };
@@ -3922,9 +4218,15 @@ impl Posh {
         let mut ok = !profiles.is_empty();
         for p in &profiles {
             let target = format!("gsettings:{p}");
-            changes.remember(&target, "use-system-font", self.ask(&gsettings, &["get", p, "use-system-font"]));
+            changes.remember(
+                &target,
+                "use-system-font",
+                self.ask(&gsettings, &["get", p, "use-system-font"]),
+            );
             changes.remember(&target, "font", self.ask(&gsettings, &["get", p, "font"]));
-            ok &= self.run(&gsettings, &["set", p, "use-system-font", "false"]).success;
+            ok &= self
+                .run(&gsettings, &["set", p, "use-system-font", "false"])
+                .success;
             ok &= self.run(&gsettings, &["set", p, "font", &font]).success;
         }
         if ok {
@@ -3950,7 +4252,10 @@ impl Posh {
             changes.remember(&format!("konsole-file:{}", made.display()), "created", None);
             if self
                 .ws
-                .write_text(&made, "[General]\nName=IdleWalker\nParentProfile=FALLBACK/\n")
+                .write_text(
+                    &made,
+                    "[General]\nName=IdleWalker\nParentProfile=FALLBACK/\n",
+                )
                 .is_err()
             {
                 log.push(format!("Konsole: could not write {}.", made.display()));
@@ -3997,9 +4302,22 @@ impl Posh {
             return false;
         };
         let target = format!("xfce:{}", t.target);
-        changes.remember(&target, "Configuration/FontName", ini_get(&text, "Configuration", "FontName"));
-        changes.remember(&target, "Configuration/FontUseSystem", ini_get(&text, "Configuration", "FontUseSystem"));
-        let new = ini_set(&text, "Configuration", "FontName", &format!("{FONT_NAME} 11"));
+        changes.remember(
+            &target,
+            "Configuration/FontName",
+            ini_get(&text, "Configuration", "FontName"),
+        );
+        changes.remember(
+            &target,
+            "Configuration/FontUseSystem",
+            ini_get(&text, "Configuration", "FontUseSystem"),
+        );
+        let new = ini_set(
+            &text,
+            "Configuration",
+            "FontName",
+            &format!("{FONT_NAME} 11"),
+        );
         let new = ini_set(&new, "Configuration", "FontUseSystem", "FALSE");
         if self.write_settings(&t.name, &path, &new, log) {
             log.push(format!("{}: font set to {FONT_NAME}.", t.name));
@@ -4008,12 +4326,21 @@ impl Posh {
         false
     }
 
-    fn kitty_apply(&self, t: &TerminalStatus, changes: &mut Changes, log: &mut Vec<String>) -> bool {
+    fn kitty_apply(
+        &self,
+        t: &TerminalStatus,
+        changes: &mut Changes,
+        log: &mut Vec<String>,
+    ) -> bool {
         let path = PathBuf::from(&t.target);
         let Some(text) = self.settings_text(&t.name, &path, log) else {
             return false;
         };
-        changes.remember(&format!("kitty:{}", t.target), "font_family", conf_get(&text, "font_family"));
+        changes.remember(
+            &format!("kitty:{}", t.target),
+            "font_family",
+            conf_get(&text, "font_family"),
+        );
         let new = conf_set(&text, "font_family", Some(FONT_NAME));
         if self.write_settings(&t.name, &path, &new, log) {
             log.push(format!("{}: font set to {FONT_NAME}.", t.name));
@@ -4022,12 +4349,21 @@ impl Posh {
         false
     }
 
-    fn alacritty_apply(&self, t: &TerminalStatus, changes: &mut Changes, log: &mut Vec<String>) -> bool {
+    fn alacritty_apply(
+        &self,
+        t: &TerminalStatus,
+        changes: &mut Changes,
+        log: &mut Vec<String>,
+    ) -> bool {
         let path = PathBuf::from(&t.target);
         let Some(text) = self.settings_text(&t.name, &path, log) else {
             return false;
         };
-        changes.remember(&format!("alacritty:{}", t.target), "font.normal.family", alacritty_font(&text));
+        changes.remember(
+            &format!("alacritty:{}", t.target),
+            "font.normal.family",
+            alacritty_font(&text),
+        );
         let new = alacritty_with_font(&text, Some(FONT_NAME));
         if self.write_settings(&t.name, &path, &new, log) {
             log.push(format!("{}: font set to {FONT_NAME}.", t.name));
@@ -4037,7 +4373,12 @@ impl Posh {
     }
 
     /// Tabby has one font for every tab and profile: `terminal.font` in `config.yaml`.
-    fn tabby_apply(&self, t: &TerminalStatus, changes: &mut Changes, log: &mut Vec<String>) -> bool {
+    fn tabby_apply(
+        &self,
+        t: &TerminalStatus,
+        changes: &mut Changes,
+        log: &mut Vec<String>,
+    ) -> bool {
         let path = PathBuf::from(&t.target);
         let Some(text) = self.settings_text(&t.name, &path, log) else {
             return false;
@@ -4077,14 +4418,15 @@ impl Posh {
                 let _ = self.ws.make_dir(dir);
             }
         }
-        let text = if r.name == "foot" { foot_main(&text) } else { text };
+        let text = if r.name == "foot" {
+            foot_main(&text)
+        } else {
+            text
+        };
         let target = format!("{}:{}", r.shape.kind(), t.target);
         let mut new = text.clone();
-        let mut edits: Vec<(&str, Option<String>)> = r
-            .keys
-            .iter()
-            .map(|(k, f)| (*k, Some(f.text())))
-            .collect();
+        let mut edits: Vec<(&str, Option<String>)> =
+            r.keys.iter().map(|(k, f)| (*k, Some(f.text()))).collect();
         for k in r.removes {
             if shape_get(r.shape, &text, r.section, k).is_some() {
                 edits.push((k, None));
@@ -4111,15 +4453,23 @@ impl Posh {
         false
     }
 
-    fn gs_global_apply(&self, t: &TerminalStatus, changes: &mut Changes, log: &mut Vec<String>) -> bool {
-        let (Some(r), Some(gsettings)) = (gs_recipe(&t.name), self.ws.find_program("gsettings")) else {
+    fn gs_global_apply(
+        &self,
+        t: &TerminalStatus,
+        changes: &mut Changes,
+        log: &mut Vec<String>,
+    ) -> bool {
+        let (Some(r), Some(gsettings)) = (gs_recipe(&t.name), self.ws.find_program("gsettings"))
+        else {
             return false;
         };
         let mut ok = true;
         for (schema, key, form) in r.settings {
             let target = format!("gsettings:{schema}");
             changes.remember(&target, key, self.ask(&gsettings, &["get", schema, key]));
-            ok &= self.run(&gsettings, &["set", schema, key, &form.text()]).success;
+            ok &= self
+                .run(&gsettings, &["set", schema, key, &form.text()])
+                .success;
         }
         log.push(if ok {
             format!("{}: font set to {FONT_NAME}.", t.name)
@@ -4129,14 +4479,23 @@ impl Posh {
         ok
     }
 
-    fn hyper_apply(&self, t: &TerminalStatus, changes: &mut Changes, log: &mut Vec<String>) -> bool {
+    fn hyper_apply(
+        &self,
+        t: &TerminalStatus,
+        changes: &mut Changes,
+        log: &mut Vec<String>,
+    ) -> bool {
         let path = PathBuf::from(&t.target);
         let Some(text) = self.settings_text(&t.name, &path, log) else {
             return false;
         };
         match hyper_with_font(&text, Some(HYPER_FONTS)) {
             Ok(new) => {
-                changes.remember(&format!("hyper:{}", t.target), "fontFamily", hyper_font(&text));
+                changes.remember(
+                    &format!("hyper:{}", t.target),
+                    "fontFamily",
+                    hyper_font(&text),
+                );
                 if self.write_settings(&t.name, &path, &new, log) {
                     log.push(format!("{}: font set to {FONT_NAME}.", t.name));
                     return true;
@@ -4153,7 +4512,12 @@ impl Posh {
         }
     }
 
-    fn conemu_apply(&self, t: &TerminalStatus, changes: &mut Changes, log: &mut Vec<String>) -> bool {
+    fn conemu_apply(
+        &self,
+        t: &TerminalStatus,
+        changes: &mut Changes,
+        log: &mut Vec<String>,
+    ) -> bool {
         if t.target == CONEMU_KEY {
             let Some(reg) = self.ws.find_program("reg") else {
                 return false;
@@ -4166,7 +4530,11 @@ impl Posh {
                 ok &= self.reg_add(&reg, &k.path, "FontName", "REG_SZ", FONT_MONO);
             }
             log.push(if ok {
-                format!("{}: font set to {FONT_MONO} in {}.", t.name, profiles_text(configs.len()))
+                format!(
+                    "{}: font set to {FONT_MONO} in {}.",
+                    t.name,
+                    profiles_text(configs.len())
+                )
             } else {
                 format!("{}: could not change every configuration.", t.name)
             });
@@ -4178,7 +4546,10 @@ impl Posh {
         };
         let fonts = conemu_fonts(&text);
         if fonts.is_empty() {
-            log.push(format!("{}: no configuration found in {}.", t.name, t.target));
+            log.push(format!(
+                "{}: no configuration found in {}.",
+                t.name, t.target
+            ));
             return false;
         }
         let mut new = text.clone();
@@ -4199,7 +4570,12 @@ impl Posh {
 
     /// PuTTY's sessions: registry keys on Windows, where a font needs its four values
     /// or PuTTY ignores it; a file per session elsewhere.
-    fn putty_apply(&self, t: &TerminalStatus, changes: &mut Changes, log: &mut Vec<String>) -> bool {
+    fn putty_apply(
+        &self,
+        t: &TerminalStatus,
+        changes: &mut Changes,
+        log: &mut Vec<String>,
+    ) -> bool {
         if self.os() == Os::Windows {
             let Some(reg) = self.ws.find_program("reg") else {
                 return false;
@@ -4215,7 +4591,11 @@ impl Posh {
             for k in &sessions {
                 let target = format!("putty:{}", k.path);
                 let mut wanted = vec![("Font", "REG_SZ", FONT_MONO)];
-                for (name, data) in [("FontIsBold", "0"), ("FontCharSet", "0"), ("FontHeight", "11")] {
+                for (name, data) in [
+                    ("FontIsBold", "0"),
+                    ("FontCharSet", "0"),
+                    ("FontHeight", "11"),
+                ] {
                     if reg_value(k, name).is_none() {
                         wanted.push((name, "REG_DWORD", data));
                     }
@@ -4227,7 +4607,11 @@ impl Posh {
                 }
             }
             log.push(if ok {
-                format!("{}: font set to {FONT_MONO} in {}.", t.name, profiles_text(sessions.len()))
+                format!(
+                    "{}: font set to {FONT_MONO} in {}.",
+                    t.name,
+                    profiles_text(sessions.len())
+                )
             } else {
                 format!("{}: could not change every session.", t.name)
             });
@@ -4243,18 +4627,34 @@ impl Posh {
         let mut ok = true;
         for f in &files {
             let text = self.ws.read_text(f).unwrap_or_default();
-            changes.remember(&format!("kv:{}", f.display()), "Font", kv_get(&text, "Font"));
-            ok &= self.ws.write_text(f, &kv_set(&text, "Font", Some(&font))).is_ok();
+            changes.remember(
+                &format!("kv:{}", f.display()),
+                "Font",
+                kv_get(&text, "Font"),
+            );
+            ok &= self
+                .ws
+                .write_text(f, &kv_set(&text, "Font", Some(&font)))
+                .is_ok();
         }
         log.push(if ok {
-            format!("{}: font set to {FONT_NAME} in {}.", t.name, profiles_text(files.len()))
+            format!(
+                "{}: font set to {FONT_NAME} in {}.",
+                t.name,
+                profiles_text(files.len())
+            )
         } else {
             format!("{}: could not write every session file.", t.name)
         });
         ok
     }
 
-    fn terminator_apply(&self, t: &TerminalStatus, changes: &mut Changes, log: &mut Vec<String>) -> bool {
+    fn terminator_apply(
+        &self,
+        t: &TerminalStatus,
+        changes: &mut Changes,
+        log: &mut Vec<String>,
+    ) -> bool {
         let path = PathBuf::from(&t.target);
         let Some(text) = self.settings_text(&t.name, &path, log) else {
             return false;
@@ -4272,7 +4672,11 @@ impl Posh {
         let font = format!("{FONT_NAME} 11");
         let mut new = text.clone();
         for p in &profiles {
-            changes.remember(&target, &format!("{p}/font"), terminator_get(&text, p, "font"));
+            changes.remember(
+                &target,
+                &format!("{p}/font"),
+                terminator_get(&text, p, "font"),
+            );
             changes.remember(
                 &target,
                 &format!("{p}/use_system_font"),
@@ -4326,7 +4730,11 @@ impl Posh {
             "{}: font set to {FONT_NAME} in {}{}.",
             t.name,
             t.target,
-            if loaded { " and loaded with xrdb" } else { "; it loads at the next sign-in" }
+            if loaded {
+                " and loaded with xrdb"
+            } else {
+                "; it loads at the next sign-in"
+            }
         ));
         true
     }
@@ -4335,7 +4743,8 @@ impl Posh {
         let Some(xrdb) = self.ws.find_program("xrdb") else {
             return false;
         };
-        self.run(&xrdb, &["-merge", &path.display().to_string()]).success
+        self.run(&xrdb, &["-merge", &path.display().to_string()])
+            .success
     }
 
     /// The PostScript names macOS itself resolves the font to, asked through a fresh
@@ -4354,7 +4763,11 @@ impl Posh {
             self.note(format!(
                 "Meslo files under {}: {}",
                 dir.display(),
-                if files.is_empty() { "none".to_string() } else { files.join(", ") }
+                if files.is_empty() {
+                    "none".to_string()
+                } else {
+                    files.join(", ")
+                }
             ));
         }
         let answer = self
@@ -4410,11 +4823,19 @@ impl Posh {
         lines.join("\n")
     }
 
-    fn apple_terminal_apply(&self, t: &TerminalStatus, changes: &mut Changes, log: &mut Vec<String>) -> bool {
+    fn apple_terminal_apply(
+        &self,
+        t: &TerminalStatus,
+        changes: &mut Changes,
+        log: &mut Vec<String>,
+    ) -> bool {
         let Some(osascript) = self.ws.find_program("osascript") else {
             return false;
         };
-        log.push("Terminal: setting its font (macOS may ask to let IdleWalker control Terminal)...".into());
+        log.push(
+            "Terminal: setting its font (macOS may ask to let IdleWalker control Terminal)..."
+                .into(),
+        );
         let mut names: Vec<String> = self.apple_font_probe(&osascript, log);
         for n in APPLE_TERMINAL_FONT_NAMES {
             if !names.iter().any(|m| m == n) {
@@ -4523,7 +4944,9 @@ impl Posh {
             Some(format!("{FONT_MONO_POSTSCRIPT} {}", font_size_of(&f.value)))
         });
         if n == 0 {
-            log.push("iTerm2: no profile saved yet; open its settings once, then try again.".into());
+            log.push(
+                "iTerm2: no profile saved yet; open its settings once, then try again.".into(),
+            );
             return false;
         }
         if self.iterm_import(&defaults, &new) {
@@ -4633,25 +5056,33 @@ impl Posh {
                 }
                 TerminalKind::Gsettings => self.gs_global_look(&t, look, &mut changes, log),
                 TerminalKind::Konsole => self.konsole_look(look, &mut changes, log),
-                TerminalKind::XfceTerminal => {
-                    self.look_file(&t.name, &path, Shape::Ini, &xfce_edits(look), &mut changes, log)
-                }
+                TerminalKind::XfceTerminal => self.look_file(
+                    &t.name,
+                    &path,
+                    Shape::Ini,
+                    &xfce_edits(look),
+                    &mut changes,
+                    log,
+                ),
                 TerminalKind::ITerm2 => self.iterm_look(look, &mut changes, log),
-                TerminalKind::Kitty | TerminalKind::Alacritty | TerminalKind::Tabby | TerminalKind::File => {
-                    match look_edits(&t.name, look) {
-                        Some((shape, mut edits)) => {
-                            if t.name == "foot" {
-                                let section = self.foot_colours_section();
-                                for e in edits.iter_mut().filter(|e| e.0 == "colors") {
-                                    e.0 = section.to_string();
-                                }
+                TerminalKind::Kitty
+                | TerminalKind::Alacritty
+                | TerminalKind::Tabby
+                | TerminalKind::File => match look_edits(&t.name, look) {
+                    Some((shape, mut edits)) => {
+                        if t.name == "foot" {
+                            let section = self.foot_colours_section();
+                            for e in edits.iter_mut().filter(|e| e.0 == "colors") {
+                                e.0 = section.to_string();
                             }
-                            self.look_file(&t.name, &path, shape, &edits, &mut changes, log)
                         }
-                        None => false,
+                        self.look_file(&t.name, &path, shape, &edits, &mut changes, log)
                     }
+                    None => false,
+                },
+                TerminalKind::BuiltIn if t.name == "Ghostty" => {
+                    self.ghostty_look(look, &mut changes, log)
                 }
-                TerminalKind::BuiltIn if t.name == "Ghostty" => self.ghostty_look(look, &mut changes, log),
                 TerminalKind::BuiltIn | TerminalKind::ByHand => {
                     log.push(format!("{}: change its look in its own settings.", t.name));
                     false
@@ -4665,7 +5096,11 @@ impl Posh {
         }
         self.undo_save(&changes.list);
         if let Some(shell) = look.default_shell.filter(|_| self.os() != Os::Windows) {
-            let program = self.shell_programs().into_iter().find(|(s, _)| *s == shell).and_then(|(_, p)| p);
+            let program = self
+                .shell_programs()
+                .into_iter()
+                .find(|(s, _)| *s == shell)
+                .and_then(|(_, p)| p);
             if let Some(p) = program {
                 log.push(format!(
                     "Login shell: run chsh -s {} in a terminal; it asks for your password.",
@@ -4709,11 +5144,19 @@ impl Posh {
         let Some(text) = self.settings_text(name, path, log) else {
             return false;
         };
-        let text = if name == "foot" { foot_main(&text) } else { text };
+        let text = if name == "foot" {
+            foot_main(&text)
+        } else {
+            text
+        };
         let target = format!("{}:{}", shape.kind(), path.display());
         let mut new = text.clone();
         for (section, key, value) in edits {
-            changes.remember(&target, &undo_key(section, key), shape_get(shape, &text, section, key));
+            changes.remember(
+                &target,
+                &undo_key(section, key),
+                shape_get(shape, &text, section, key),
+            );
             match shape_set(shape, &new, section, key, Some(value)) {
                 Ok(n) => new = n,
                 Err(e) => {
@@ -4729,20 +5172,47 @@ impl Posh {
         false
     }
 
-    fn vscode_look(&self, t: &TerminalStatus, look: &Look, changes: &mut Changes, log: &mut Vec<String>) -> bool {
+    fn vscode_look(
+        &self,
+        t: &TerminalStatus,
+        look: &Look,
+        changes: &mut Changes,
+        log: &mut Vec<String>,
+    ) -> bool {
         let mut edits = vscode_edits(look);
         let os_key = match self.os() {
             Os::Windows => "windows",
             Os::MacOs => "osx",
             Os::Linux => "linux",
         };
-        if let Some(name) = look.default_shell.and_then(|s| vscode_profile_name(s, self.os())) {
-            edit(&mut edits, "", &format!("terminal.integrated.defaultProfile.{os_key}"), jsonc::quoted(name));
+        if let Some(name) = look
+            .default_shell
+            .and_then(|s| vscode_profile_name(s, self.os()))
+        {
+            edit(
+                &mut edits,
+                "",
+                &format!("terminal.integrated.defaultProfile.{os_key}"),
+                jsonc::quoted(name),
+            );
         }
-        self.look_file(&t.name, Path::new(&t.target), Shape::Json, &edits, changes, log)
+        self.look_file(
+            &t.name,
+            Path::new(&t.target),
+            Shape::Json,
+            &edits,
+            changes,
+            log,
+        )
     }
 
-    fn wt_look(&self, t: &TerminalStatus, look: &Look, changes: &mut Changes, log: &mut Vec<String>) -> bool {
+    fn wt_look(
+        &self,
+        t: &TerminalStatus,
+        look: &Look,
+        changes: &mut Changes,
+        log: &mut Vec<String>,
+    ) -> bool {
         let path = PathBuf::from(&t.target);
         let Some(text) = self.settings_text(&t.name, &path, log) else {
             return false;
@@ -4753,13 +5223,19 @@ impl Posh {
             sets.push((vec!["font", "size"], n.to_string()));
         }
         if let Some(c) = look.cursor {
-            sets.push((vec!["cursorShape"], jsonc::quoted(c.pick(["filledBox", "bar", "underscore"]))));
+            sets.push((
+                vec!["cursorShape"],
+                jsonc::quoted(c.pick(["filledBox", "bar", "underscore"])),
+            ));
         }
         if let Some(o) = look.opacity {
             sets.push((vec!["opacity"], o.to_string()));
         }
         if let Some(l) = look.ligatures {
-            sets.push((vec!["font", "features"], format!("{{\"calt\": {}}}", u8::from(l))));
+            sets.push((
+                vec!["font", "features"],
+                format!("{{\"calt\": {}}}", u8::from(l)),
+            ));
         }
         if let Some(p) = look.colours.and_then(|i| PALETTES.get(i)) {
             sets.push((vec!["colorScheme"], jsonc::quoted(p.name)));
@@ -4769,7 +5245,11 @@ impl Posh {
             for (rel, raw) in &sets {
                 let mut full = vec!["profiles", "defaults"];
                 full.extend(rel.iter());
-                changes.remember(&target, &format!("defaults/{}", rel.join("/")), jsonc::get_raw(&text, &full));
+                changes.remember(
+                    &target,
+                    &format!("defaults/{}", rel.join("/")),
+                    jsonc::get_raw(&text, &full),
+                );
                 new = jsonc::set_raw(&new, &full, raw)?;
                 // A profile with a value of its own would keep it over the default.
                 let count = jsonc::objects_in(&new, &WT_LIST).len();
@@ -4781,7 +5261,11 @@ impl Posh {
                     let Some(guid) = jsonc::get_string_at(&new, open, &["guid"]) else {
                         continue;
                     };
-                    changes.remember(&target, &format!("list:{guid}/{}", rel.join("/")), Some(before));
+                    changes.remember(
+                        &target,
+                        &format!("list:{guid}/{}", rel.join("/")),
+                        Some(before),
+                    );
                     new = jsonc::set_raw_at(&new, open, rel, raw)?;
                 }
             }
@@ -4792,7 +5276,11 @@ impl Posh {
                         .flatten()
                 });
                 if let Some(guid) = guid {
-                    changes.remember(&target, "root/defaultProfile", jsonc::get_raw(&text, &["defaultProfile"]));
+                    changes.remember(
+                        &target,
+                        "root/defaultProfile",
+                        jsonc::get_raw(&text, &["defaultProfile"]),
+                    );
                     new = jsonc::set_string(&new, &["defaultProfile"], &guid)?;
                 }
             }
@@ -4823,16 +5311,20 @@ impl Posh {
                 let rel: Vec<&str> = rel.split('/').collect();
                 let result = match scope.strip_prefix("list:") {
                     Some(guid) => {
-                        let open = jsonc::objects_in(&text, &WT_LIST)
-                            .into_iter()
-                            .find(|o| jsonc::get_string_at(&text, *o, &["guid"]).as_deref() == Some(guid));
+                        let open = jsonc::objects_in(&text, &WT_LIST).into_iter().find(|o| {
+                            jsonc::get_string_at(&text, *o, &["guid"]).as_deref() == Some(guid)
+                        });
                         match (open, &u.before) {
                             (Some(o), Some(v)) => jsonc::set_raw_at(&text, o, &rel, v),
                             _ => Ok(text.clone()),
                         }
                     }
                     None => {
-                        let mut full = if scope == "defaults" { vec!["profiles", "defaults"] } else { Vec::new() };
+                        let mut full = if scope == "defaults" {
+                            vec!["profiles", "defaults"]
+                        } else {
+                            Vec::new()
+                        };
                         full.extend(rel.iter());
                         match &u.before {
                             Some(v) => jsonc::set_raw(&text, &full, v),
@@ -4894,7 +5386,13 @@ impl Posh {
         ok
     }
 
-    fn gsettings_look(&self, t: &TerminalStatus, look: &Look, changes: &mut Changes, log: &mut Vec<String>) -> bool {
+    fn gsettings_look(
+        &self,
+        t: &TerminalStatus,
+        look: &Look,
+        changes: &mut Changes,
+        log: &mut Vec<String>,
+    ) -> bool {
         let Some(gsettings) = self.ws.find_program("gsettings") else {
             return false;
         };
@@ -4922,16 +5420,28 @@ impl Posh {
             }
         }
         if ok {
-            log.push(format!("{}: look changed in {}.", t.name, profiles_text(profiles.len())));
+            log.push(format!(
+                "{}: look changed in {}.",
+                t.name,
+                profiles_text(profiles.len())
+            ));
         }
         ok
     }
 
     /// The terminals with one setting in gsettings: their font carries its size.
-    fn gs_global_look(&self, t: &TerminalStatus, look: &Look, changes: &mut Changes, log: &mut Vec<String>) -> bool {
-        let (Some(r), Some(gsettings), Some(size)) =
-            (gs_recipe(&t.name), self.ws.find_program("gsettings"), look.font_size)
-        else {
+    fn gs_global_look(
+        &self,
+        t: &TerminalStatus,
+        look: &Look,
+        changes: &mut Changes,
+        log: &mut Vec<String>,
+    ) -> bool {
+        let (Some(r), Some(gsettings), Some(size)) = (
+            gs_recipe(&t.name),
+            self.ws.find_program("gsettings"),
+            look.font_size,
+        ) else {
             return false;
         };
         let mut ok = false;
@@ -4939,7 +5449,11 @@ impl Posh {
             let Some(value) = form.sized(size) else {
                 continue;
             };
-            changes.remember(&format!("gsettings:{schema}"), key, self.ask(&gsettings, &["get", schema, key]));
+            changes.remember(
+                &format!("gsettings:{schema}"),
+                key,
+                self.ask(&gsettings, &["get", schema, key]),
+            );
             ok = self.run(&gsettings, &["set", schema, key, &value]).success;
         }
         if ok {
@@ -4951,15 +5465,29 @@ impl Posh {
     fn konsole_look(&self, look: &Look, changes: &mut Changes, log: &mut Vec<String>) -> bool {
         let mut edits: Vec<Edit> = Vec::new();
         if let Some(n) = look.font_size {
-            edit(&mut edits, "Appearance", "Font", format!("{FONT_NAME},{n},-1,5,50,0,0,0,0,0"));
+            edit(
+                &mut edits,
+                "Appearance",
+                "Font",
+                format!("{FONT_NAME},{n},-1,5,50,0,0,0,0,0"),
+            );
         }
         if let Some(c) = look.cursor {
-            edit(&mut edits, "Cursor Options", "CursorShape", c.pick(["0", "1", "2"]));
+            edit(
+                &mut edits,
+                "Cursor Options",
+                "CursorShape",
+                c.pick(["0", "1", "2"]),
+            );
         }
         if let Some(p) = look.colours.and_then(|i| PALETTES.get(i)) {
             let name = format!("IdleWalker-{}", p.name.replace(' ', ""));
             let file = self.konsole_dir().join(format!("{name}.colorscheme"));
-            if self.ws.write_text(&file, &konsole_scheme(p, look.opacity)).is_ok() {
+            if self
+                .ws
+                .write_text(&file, &konsole_scheme(p, look.opacity))
+                .is_ok()
+            {
                 edit(&mut edits, "Appearance", "ColorScheme", name);
             }
         } else if look.opacity.is_some() {
@@ -4967,7 +5495,9 @@ impl Posh {
         }
         let profiles = self.konsole_profiles();
         if profiles.is_empty() && !edits.is_empty() {
-            log.push("Konsole: no profile yet; click \"Use the font in these terminals\" first.".into());
+            log.push(
+                "Konsole: no profile yet; click \"Use the font in these terminals\" first.".into(),
+            );
         }
         let mut any = false;
         for p in profiles {
@@ -4979,15 +5509,27 @@ impl Posh {
     /// Ghostty takes a whole palette from a theme file of its own.
     fn ghostty_look(&self, look: &Look, changes: &mut Changes, log: &mut Vec<String>) -> bool {
         let dir = match self.os() {
-            Os::MacOs => self.home().join("Library").join("Application Support").join("com.mitchellh.ghostty"),
+            Os::MacOs => self
+                .home()
+                .join("Library")
+                .join("Application Support")
+                .join("com.mitchellh.ghostty"),
             _ => self.config_home().join("ghostty"),
         };
         let named = dir.join("config.ghostty");
-        let path = if self.ws.exists(&named) { named } else { dir.join("config") };
+        let path = if self.ws.exists(&named) {
+            named
+        } else {
+            dir.join("config")
+        };
         let mut edits = ghostty_edits(look);
         if let Some(p) = look.colours.and_then(|i| PALETTES.get(i)) {
             let name = format!("idlewalker-{}", p.name.replace(' ', "-").to_lowercase());
-            if self.ws.write_text(&dir.join("themes").join(&name), &ghostty_theme(p)).is_ok() {
+            if self
+                .ws
+                .write_text(&dir.join("themes").join(&name), &ghostty_theme(p))
+                .is_ok()
+            {
                 edit(&mut edits, "", "theme", name);
             }
         }
@@ -5007,7 +5549,9 @@ impl Posh {
             changes.remember(&format!("iterm2:{}", f.guid), &f.key, Some(f.value.clone()));
         }
         let (new, n) = iterm_with_fonts(&plist, |f| {
-            f.value.rsplit_once(' ').map(|(name, _)| format!("{name} {size}"))
+            f.value
+                .rsplit_once(' ')
+                .map(|(name, _)| format!("{name} {size}"))
         });
         if n > 0 && self.iterm_import(&defaults, &new) {
             log.push(format!("iTerm2: font size set in {}.", profiles_text(n)));
@@ -5038,7 +5582,9 @@ impl Posh {
         for f in &files {
             let text = self.ws.read_text(f).unwrap_or_default();
             profiles += jsonc::objects_in(&text, &["Profiles"]).len();
-            all &= iterm_dynamic_fonts(&text).iter().all(|(_, _, v)| is_nerd_font(v));
+            all &= iterm_dynamic_fonts(&text)
+                .iter()
+                .all(|(_, _, v)| is_nerd_font(v));
         }
         out.push(TerminalStatus {
             name: "iTerm2 Dynamic Profiles".into(),
@@ -5052,7 +5598,11 @@ impl Posh {
     fn iterm_dynamic_apply(&self, changes: &mut Changes, log: &mut Vec<String>) -> bool {
         let mut any = false;
         for file in self.ws.list_files(&self.iterm_dynamic_dir(), 1) {
-            let Some(text) = self.ws.read_text(&file).filter(|t| t.trim_start().starts_with('{')) else {
+            let Some(text) = self
+                .ws
+                .read_text(&file)
+                .filter(|t| t.trim_start().starts_with('{'))
+            else {
                 any |= self.iterm_plist_file_apply(&file, changes, log);
                 continue;
             };
@@ -5060,7 +5610,11 @@ impl Posh {
             let mut new = text.clone();
             let fonts = iterm_dynamic_fonts(&text);
             for (index, key, value) in &fonts {
-                changes.remember(&target, &format!("{index}/{key}"), Some(jsonc::quoted(value)));
+                changes.remember(
+                    &target,
+                    &format!("{index}/{key}"),
+                    Some(jsonc::quoted(value)),
+                );
                 let font = format!("{FONT_MONO_POSTSCRIPT} {}", font_size_of(value));
                 let open = jsonc::objects_in(&new, &["Profiles"])[*index];
                 match jsonc::set_raw_at(&new, open, &[*key], &jsonc::quoted(&font)) {
@@ -5077,12 +5631,19 @@ impl Posh {
     }
 
     /// A dynamic profile file in XML or binary: macOS's own tool reads and changes it.
-    fn iterm_plist_file_apply(&self, file: &Path, changes: &mut Changes, log: &mut Vec<String>) -> bool {
+    fn iterm_plist_file_apply(
+        &self,
+        file: &Path,
+        changes: &mut Changes,
+        log: &mut Vec<String>,
+    ) -> bool {
         let name = file.display().to_string();
-        let json = self
-            .ws
-            .find_program("plutil")
-            .and_then(|p| Some((self.ask_all(&p, &["-convert", "json", "-o", "-", &name])?, p)));
+        let json = self.ws.find_program("plutil").and_then(|p| {
+            Some((
+                self.ask_all(&p, &["-convert", "json", "-o", "-", &name])?,
+                p,
+            ))
+        });
         let Some((json, plutil)) = json else {
             log.push(format!("iTerm2: {name} could not be read; left alone."));
             return false;
@@ -5093,7 +5654,9 @@ impl Posh {
             let font = format!("{FONT_MONO_POSTSCRIPT} {}", font_size_of(&value));
             changes.remember(&target, &format!("{index}/{key}"), Some(value));
             let path = format!("Profiles.{index}.{key}");
-            any |= self.run(&plutil, &["-replace", &path, "-string", &font, &name]).success;
+            any |= self
+                .run(&plutil, &["-replace", &path, "-string", &font, &name])
+                .success;
         }
         if any {
             log.push(format!("iTerm2: font set in {name}."));
@@ -5112,7 +5675,9 @@ impl Posh {
                     continue;
                 };
                 let path = format!("Profiles.{index}.{key}");
-                ok &= self.run(&plutil, &["-replace", &path, "-string", before, &file]).success;
+                ok &= self
+                    .run(&plutil, &["-replace", &path, "-string", before, &file])
+                    .success;
             }
             log.push(format!("iTerm2: fonts put back in {file}."));
         }
@@ -5183,7 +5748,10 @@ impl Posh {
             return;
         }
         let all = dirs.iter().all(|d| {
-            let text = self.ws.read_text(&d.join(JETBRAINS_FONTS[0].0)).unwrap_or_default();
+            let text = self
+                .ws
+                .read_text(&d.join(JETBRAINS_FONTS[0].0))
+                .unwrap_or_default();
             xml_font(&text).is_some_and(|f| is_nerd_font(&f))
         });
         out.push(TerminalStatus {
@@ -5191,7 +5759,11 @@ impl Posh {
             kind: TerminalKind::JetBrains,
             target: String::new(),
             font_set: all,
-            detail: if dirs.len() == 1 { "1 IDE".into() } else { format!("{} IDEs", dirs.len()) },
+            detail: if dirs.len() == 1 {
+                "1 IDE".into()
+            } else {
+                format!("{} IDEs", dirs.len())
+            },
         });
     }
 
@@ -5203,7 +5775,11 @@ impl Posh {
                 let Some(text) = self.settings_text("JetBrains", &path, log) else {
                     continue;
                 };
-                changes.remember(&format!("jetbrains:{}", path.display()), component, xml_font(&text));
+                changes.remember(
+                    &format!("jetbrains:{}", path.display()),
+                    component,
+                    xml_font(&text),
+                );
                 let new = xml_with_font(&text, component, Some(FONT_MONO));
                 any |= self.write_settings("JetBrains", &path, &new, log);
             }
@@ -5250,14 +5826,21 @@ impl Posh {
         let mut n = 0;
         for line in r.stdout.lines() {
             let mut parts = line.trim().split('\t');
-            let (Some(file), Some(face), Some(family)) = (parts.next(), parts.next(), parts.next()) else {
+            let (Some(file), Some(face), Some(family)) = (parts.next(), parts.next(), parts.next())
+            else {
                 continue;
             };
-            changes.remember(&format!("lnk:{file}"), "FaceName", Some(format!("{face}|{family}")));
+            changes.remember(
+                &format!("lnk:{file}"),
+                "FaceName",
+                Some(format!("{face}|{family}")),
+            );
             n += 1;
         }
         if n > 0 {
-            log.push(format!("Shortcuts with a console font of their own: {n} set to {FONT_MONO}."));
+            log.push(format!(
+                "Shortcuts with a console font of their own: {n} set to {FONT_MONO}."
+            ));
         }
         n > 0
     }
@@ -5281,7 +5864,10 @@ impl Posh {
             .collect();
         let script = SHORTCUT_RESTORE.replace("@ROWS@", &rows.join("\n"));
         let r = self.run(&ps, &["-NoProfile", "-NonInteractive", "-Command", &script]);
-        log.push(format!("Shortcuts: console fonts put back in {}.", rows.len()));
+        log.push(format!(
+            "Shortcuts: console fonts put back in {}.",
+            rows.len()
+        ));
         r.success
     }
 
@@ -5668,8 +6254,10 @@ impl Posh {
                 for k in reg_parse(&listed) {
                     for (name, _, data) in &k.values {
                         let is_ours = files.iter().any(|f| {
-                            f.file_name()
-                                .is_some_and(|n| data.to_lowercase().ends_with(&n.to_string_lossy().to_lowercase()))
+                            f.file_name().is_some_and(|n| {
+                                data.to_lowercase()
+                                    .ends_with(&n.to_string_lossy().to_lowercase())
+                            })
                         });
                         if is_ours {
                             self.reg_delete(&reg, key, name);
@@ -5745,7 +6333,10 @@ impl Posh {
         }
         let new = with_block(&text, "#", "[ -f ~/.bashrc ] && . ~/.bashrc");
         if self.ws.write_text(&path, &new).is_ok() {
-            log.push("Bash: .bash_profile now loads .bashrc, for terminals that open login shells.".into());
+            log.push(
+                "Bash: .bash_profile now loads .bashrc, for terminals that open login shells."
+                    .into(),
+            );
         }
     }
 
@@ -6006,7 +6597,11 @@ const GS_RECIPES: &[GsRecipe] = &[
         name: "Ptyxis",
         program: "ptyxis",
         settings: &[
-            ("org.gnome.Ptyxis", "use-system-font", Form::Literal("false")),
+            (
+                "org.gnome.Ptyxis",
+                "use-system-font",
+                Form::Literal("false"),
+            ),
             ("org.gnome.Ptyxis", "font-name", Form::NameSize),
         ],
     },
@@ -6014,7 +6609,11 @@ const GS_RECIPES: &[GsRecipe] = &[
         name: "GNOME Console",
         program: "kgx",
         settings: &[
-            ("org.gnome.Console", "use-system-font", Form::Literal("false")),
+            (
+                "org.gnome.Console",
+                "use-system-font",
+                Form::Literal("false"),
+            ),
             ("org.gnome.Console", "custom-font", Form::NameSize),
         ],
     },
@@ -6349,8 +6948,7 @@ fn recipe_font_set(r: &Recipe, text: &str) -> bool {
     r.keys
         .iter()
         .all(|(k, f)| shape_get(r.shape, text, r.section, k).is_some_and(|v| f.is_set(&v)))
-        && r
-            .removes
+        && r.removes
             .iter()
             .all(|k| shape_get(r.shape, text, r.section, k).is_none())
 }
@@ -6392,8 +6990,8 @@ fn gvariant_strings(text: &str) -> Vec<String> {
 /// Whether every profile uses the Nerd Font with the colour adjustment off, and how many
 /// profiles have a font of their own (the defaults count as one).
 fn wt_status(text: &str) -> (bool, usize) {
-    let face = jsonc::get_string(text, &WT_FACE)
-        .or_else(|| jsonc::get_string(text, &WT_LEGACY_FACE));
+    let face =
+        jsonc::get_string(text, &WT_FACE).or_else(|| jsonc::get_string(text, &WT_LEGACY_FACE));
     let colours = jsonc::get_raw(text, &WT_COLOURS).is_some_and(|v| v == "\"never\"");
     let mut all = face.is_some_and(|f| is_nerd_font(&f)) && colours;
     let mut n = 1;
@@ -6416,7 +7014,12 @@ fn wt_profile_id(text: &str, open: usize) -> Option<String> {
 
 /// The settings with the Nerd Font in the defaults and in every profile that has a font
 /// of its own, the colour adjustment off, and each old value remembered.
-fn wt_with_font(text: &str, target: &str, font: &str, changes: &mut Changes) -> Result<(String, usize), String> {
+fn wt_with_font(
+    text: &str,
+    target: &str,
+    font: &str,
+    changes: &mut Changes,
+) -> Result<(String, usize), String> {
     let mut t = text.to_string();
     changes.remember(target, "defaults.font.face", jsonc::get_raw(&t, &WT_FACE));
     t = jsonc::set_string(&t, &WT_FACE, font)?;
@@ -6453,15 +7056,24 @@ fn wt_with_font(text: &str, target: &str, font: &str, changes: &mut Changes) -> 
 }
 
 /// A member set back or taken out; a `font` object left empty goes with it.
-fn json_put_back(text: &str, open: usize, path: &[&str], before: Option<&str>) -> Result<String, String> {
+fn json_put_back(
+    text: &str,
+    open: usize,
+    path: &[&str],
+    before: Option<&str>,
+) -> Result<String, String> {
     match before {
         Some(raw) => jsonc::set_raw_at(text, open, path, raw),
         None => {
             let t = jsonc::remove_at(text, open, path)?;
             let parent = &path[..path.len() - 1];
             let empty = !parent.is_empty()
-                && jsonc::get_raw_at(&t, open, parent)
-                    .is_some_and(|raw| raw.trim_start_matches('{').trim_end_matches('}').trim().is_empty());
+                && jsonc::get_raw_at(&t, open, parent).is_some_and(|raw| {
+                    raw.trim_start_matches('{')
+                        .trim_end_matches('}')
+                        .trim()
+                        .is_empty()
+                });
             if empty {
                 jsonc::remove_at(&t, open, parent)
             } else {
@@ -6480,7 +7092,9 @@ fn wt_without_font(text: &str, list: &[&Undo]) -> Result<String, String> {
         t = match u.key.as_str() {
             "defaults.font.face" => json_put_back(&t, root, &WT_FACE, before)?,
             "defaults.fontFace" => json_put_back(&t, root, &WT_LEGACY_FACE, before)?,
-            "defaults.adjustIndistinguishableColors" => json_put_back(&t, root, &WT_COLOURS, before)?,
+            "defaults.adjustIndistinguishableColors" => {
+                json_put_back(&t, root, &WT_COLOURS, before)?
+            }
             key => {
                 let Some(rest) = key.strip_prefix("list:") else {
                     continue;
@@ -6544,7 +7158,10 @@ fn reg_parse(text: &str) -> Vec<RegKey> {
             key.values.push((
                 parts[0].trim().to_string(),
                 parts[1].trim().to_string(),
-                parts.get(2).map(|d| d.trim().to_string()).unwrap_or_default(),
+                parts
+                    .get(2)
+                    .map(|d| d.trim().to_string())
+                    .unwrap_or_default(),
             ));
         }
     }
@@ -6626,7 +7243,10 @@ fn ini_remove(text: &str, section: &str, key: &str) -> String {
         return text.to_string();
     };
     lines.remove(start + 1 + at);
-    if lines[start + 1..end - 1].iter().all(|l| l.trim().is_empty()) {
+    if lines[start + 1..end - 1]
+        .iter()
+        .all(|l| l.trim().is_empty())
+    {
         lines.drain(start..end - 1);
         while lines.last().is_some_and(|l| l.trim().is_empty()) {
             lines.pop();
@@ -6654,7 +7274,9 @@ fn conf_get(text: &str, key: &str) -> Option<String> {
 fn conf_set(text: &str, key: &str, value: Option<&str>) -> String {
     let is_key = |l: &str| {
         let l = l.trim();
-        l == key || l.strip_prefix(key).is_some_and(|r| r.starts_with(char::is_whitespace))
+        l == key
+            || l.strip_prefix(key)
+                .is_some_and(|r| r.starts_with(char::is_whitespace))
     };
     let mut lines: Vec<String> = text.lines().map(str::to_string).collect();
     let at = lines.iter().position(|l| is_key(l));
@@ -6699,12 +7321,15 @@ fn yaml_section(lines: &[String], section: &str) -> Option<(usize, usize, usize)
 }
 
 /// The line in a section that holds `key:` at the section's own indent.
-fn yaml_child(lines: &[String], (start, end, indent): (usize, usize, usize), key: &str) -> Option<usize> {
+fn yaml_child(
+    lines: &[String],
+    (start, end, indent): (usize, usize, usize),
+    key: &str,
+) -> Option<usize> {
     (start + 1..end).find(|&i| {
         let l = &lines[i];
         l.len() - l.trim_start().len() == indent
-            && l
-                .trim_start()
+            && l.trim_start()
                 .strip_prefix(key)
                 .and_then(|r| r.strip_prefix(':'))
                 .is_some_and(|r| r.is_empty() || r.starts_with(char::is_whitespace))
@@ -6820,7 +7445,9 @@ fn toml_value(line: &str) -> String {
 
 /// A `[table]` header's index and where the next header starts.
 fn toml_table(lines: &[String], table: &str) -> Option<(usize, usize)> {
-    let start = lines.iter().position(|l| l.trim() == format!("[{table}]"))?;
+    let start = lines
+        .iter()
+        .position(|l| l.trim() == format!("[{table}]"))?;
     let end = lines[start + 1..]
         .iter()
         .position(|l| l.trim_start().starts_with('['))
@@ -6872,7 +7499,10 @@ fn toml_set(text: &str, table: &str, key: &str, value: Option<&str>) -> String {
             (Some(i), Some(v)) => lines[i] = format!("{key} = {v}"),
             (Some(i), None) => {
                 lines.remove(i);
-                if lines[start + 1..end - 1].iter().all(|l| l.trim().is_empty()) {
+                if lines[start + 1..end - 1]
+                    .iter()
+                    .all(|l| l.trim().is_empty())
+                {
                     lines.drain(start..end - 1);
                     while lines.last().is_some_and(|l| l.trim().is_empty()) {
                         lines.pop();
@@ -6950,7 +7580,10 @@ fn hyper_with_font(text: &str, value: Option<&str>) -> Result<String, String> {
                 })
                 .ok_or_else(|| "no `config: {` found".to_string())?;
             let indent = indent_of(&lines[config]) + 2;
-            lines.insert(config + 1, format!("{}fontFamily: {v},", " ".repeat(indent)));
+            lines.insert(
+                config + 1,
+                format!("{}fontFamily: {v},", " ".repeat(indent)),
+            );
         }
         (None, None) => return Ok(text.to_string()),
     }
@@ -7017,7 +7650,8 @@ fn conemu_fonts(text: &str) -> Vec<(String, Option<String>)> {
 fn conemu_with_font(text: &str, config: &str, value: Option<&str>) -> String {
     let mut lines: Vec<String> = Vec::new();
     let (mut depth, mut inside, mut done) = (0, false, false);
-    let is_font = |t: &str| t.starts_with("<value ") && xml_attr(t, "name").as_deref() == Some("FontName");
+    let is_font =
+        |t: &str| t.starts_with("<value ") && xml_attr(t, "name").as_deref() == Some("FontName");
     for line in text.lines() {
         let t = line.trim();
         let indent = &line[..line.len() - line.trim_start().len()];
@@ -7089,7 +7723,10 @@ fn terminator_heads(lines: &[String]) -> Vec<(String, usize)> {
 
 fn terminator_profiles(text: &str) -> Vec<String> {
     let lines: Vec<String> = text.lines().map(str::to_string).collect();
-    terminator_heads(&lines).into_iter().map(|(n, _)| n).collect()
+    terminator_heads(&lines)
+        .into_iter()
+        .map(|(n, _)| n)
+        .collect()
 }
 
 /// A profile's lines: its head's index and where the next head or the block ends.
@@ -7637,12 +8274,19 @@ mod tests {
                 .unwrap_or_default();
             for (arg, path) in &self.drops {
                 if args.first() == Some(&arg.as_str()) {
-                    self.files.lock().unwrap().insert(path.clone(), String::new());
+                    self.files
+                        .lock()
+                        .unwrap()
+                        .insert(path.clone(), String::new());
                 }
             }
             let whole = (name.clone(), args.join(" "));
             if let Some(outs) = self.turns.lock().unwrap().get_mut(&whole) {
-                let out = if outs.len() > 1 { outs.remove(0) } else { outs[0].clone() };
+                let out = if outs.len() > 1 {
+                    outs.remove(0)
+                } else {
+                    outs[0].clone()
+                };
                 return RunResult {
                     success: true,
                     stdout: out,
@@ -7650,7 +8294,11 @@ mod tests {
                 };
             }
             let first = (name, args.first().map_or("", |a| a).to_string());
-            match self.answers.get(&whole).or_else(|| self.answers.get(&first)) {
+            match self
+                .answers
+                .get(&whole)
+                .or_else(|| self.answers.get(&first))
+            {
                 Some(out) => RunResult {
                     success: true,
                     stdout: out.clone(),
@@ -7925,9 +8573,15 @@ mod tests {
         });
         assert!(done.ok, "{:?}", done.log);
         let profile = fake.text("/home/ann/.bash_profile");
-        assert!(profile.contains("[ -f ~/.bashrc ] && . ~/.bashrc"), "{profile}");
+        assert!(
+            profile.contains("[ -f ~/.bashrc ] && . ~/.bashrc"),
+            "{profile}"
+        );
         posh.perform(&Task::Remove);
-        assert_eq!(fake.text("/home/ann/.bash_profile"), "export PATH=$PATH:~/bin\n");
+        assert_eq!(
+            fake.text("/home/ann/.bash_profile"),
+            "export PATH=$PATH:~/bin\n"
+        );
     }
 
     #[test]
@@ -7935,18 +8589,29 @@ mod tests {
         let mut f = linux_box();
         f.program("nu", "/usr/bin/nu");
         f.answer("nu", "--version", "0.103.0\n");
-        f.answer("nu", "-c $nu.config-path", "/home/ann/.config/nushell/config.nu\n");
+        f.answer(
+            "nu",
+            "-c $nu.config-path",
+            "/home/ann/.config/nushell/config.nu\n",
+        );
         f.answer(
             "nu",
             "-c $nu.data-dir | path join vendor autoload",
             "/home/ann/.local/share/nushell/vendor/autoload\n",
         );
-        f.file("/home/ann/.local/share/nushell/vendor/autoload/oh-my-posh.nu", "# omp");
+        f.file(
+            "/home/ann/.local/share/nushell/vendor/autoload/oh-my-posh.nu",
+            "# omp",
+        );
         let fake = Arc::new(f);
         let posh = Posh::new(fake.clone());
         let s = posh.status();
         let nu = s.shells.iter().find(|s| s.shell == Shell::Nu).unwrap();
-        assert!(nu.blocker.as_deref().unwrap().contains("0.104.0"), "{:?}", nu.blocker);
+        assert!(
+            nu.blocker.as_deref().unwrap().contains("0.104.0"),
+            "{:?}",
+            nu.blocker
+        );
         assert_eq!(
             nu.profile,
             PathBuf::from("/home/ann/.config/nushell/config.nu")
@@ -8025,7 +8690,10 @@ mod tests {
         assert_eq!(conf_get(kitty, "font_family").as_deref(), Some("Menlo"));
         assert_eq!(conf_get(kitty, "font_size").as_deref(), Some("12"));
         let set = conf_set(kitty, "font_family", Some(FONT_NAME));
-        assert_eq!(set, "# fonts\nfont_size 12\nfont_family MesloLGM Nerd Font\n");
+        assert_eq!(
+            set,
+            "# fonts\nfont_size 12\nfont_family MesloLGM Nerd Font\n"
+        );
         assert_eq!(conf_set(&set, "font_family", Some("Menlo")), kitty);
         let added = conf_set("font_size 12\n", "font_family", Some("X"));
         assert_eq!(added, "font_size 12\nfont_family X\n");
@@ -8055,22 +8723,42 @@ mod tests {
         );
         assert_eq!(alacritty_font(&added).as_deref(), Some(FONT_NAME));
         assert_eq!(alacritty_with_font(&added, None), bare);
-        assert_eq!(alacritty_with_font("", Some("X")), "[font]\nnormal = { family = \"X\" }\n");
+        assert_eq!(
+            alacritty_with_font("", Some("X")),
+            "[font]\nnormal = { family = \"X\" }\n"
+        );
 
         // Xfce Terminal's keys.
         let rc = "[Configuration]\nMiscAlwaysShowTabs=FALSE\nFontUseSystem=TRUE\n";
-        let set = ini_set(&ini_set(rc, "Configuration", "FontName", "F 11"), "Configuration", "FontUseSystem", "FALSE");
-        assert_eq!(ini_get(&set, "Configuration", "FontName").as_deref(), Some("F 11"));
-        assert_eq!(ini_get(&set, "Configuration", "FontUseSystem").as_deref(), Some("FALSE"));
+        let set = ini_set(
+            &ini_set(rc, "Configuration", "FontName", "F 11"),
+            "Configuration",
+            "FontUseSystem",
+            "FALSE",
+        );
+        assert_eq!(
+            ini_get(&set, "Configuration", "FontName").as_deref(),
+            Some("F 11")
+        );
+        assert_eq!(
+            ini_get(&set, "Configuration", "FontUseSystem").as_deref(),
+            Some("FALSE")
+        );
     }
 
     #[test]
     fn tabby_yaml_is_edited_and_put_back() {
         let yaml = "version: 1\nterminal:\n  fontSize: 14\n  font: Consolas\n  colorScheme:\n    name: x\n    font: nope\n\nhotkeys:\n  copy:\n    - Ctrl-C\n";
-        assert_eq!(yaml_get(yaml, "terminal", "font").as_deref(), Some("Consolas"));
+        assert_eq!(
+            yaml_get(yaml, "terminal", "font").as_deref(),
+            Some("Consolas")
+        );
         assert_eq!(yaml_get(yaml, "hotkeys", "font"), None);
         let set = yaml_set(yaml, "terminal", "font", Some(FONT_NAME));
-        assert_eq!(set, yaml.replace("font: Consolas", "font: MesloLGM Nerd Font"));
+        assert_eq!(
+            set,
+            yaml.replace("font: Consolas", "font: MesloLGM Nerd Font")
+        );
         assert_eq!(yaml_set(&set, "terminal", "font", Some("Consolas")), yaml);
         assert_eq!(yaml_unquote("'Fira Code'"), "Fira Code");
         assert_eq!(yaml_unquote("\"Fira Code\""), "Fira Code");
@@ -8078,7 +8766,10 @@ mod tests {
         // No font yet: it goes first in the section, and leaves it again.
         let bare = "version: 1\nterminal:\n  fontSize: 14\nhotkeys: {}\n";
         let added = yaml_set(bare, "terminal", "font", Some("X"));
-        assert_eq!(added, "version: 1\nterminal:\n  font: X\n  fontSize: 14\nhotkeys: {}\n");
+        assert_eq!(
+            added,
+            "version: 1\nterminal:\n  font: X\n  fontSize: 14\nhotkeys: {}\n"
+        );
         assert_eq!(yaml_set(&added, "terminal", "font", None), bare);
         // No section: added at the end, and taken away with it.
         let none = "version: 1\n";
@@ -8086,8 +8777,14 @@ mod tests {
         assert_eq!(added, "version: 1\nterminal:\n  font: X\n");
         assert_eq!(yaml_set(&added, "terminal", "font", None), none);
         // An empty section as js-yaml writes it, and an empty file.
-        assert_eq!(yaml_set("terminal: {}\n", "terminal", "font", Some("X")), "terminal:\n  font: X\n");
-        assert_eq!(yaml_set("", "terminal", "font", Some("X")), "terminal:\n  font: X\n");
+        assert_eq!(
+            yaml_set("terminal: {}\n", "terminal", "font", Some("X")),
+            "terminal:\n  font: X\n"
+        );
+        assert_eq!(
+            yaml_set("", "terminal", "font", Some("X")),
+            "terminal:\n  font: X\n"
+        );
         // Four-space indents and CRLF are kept.
         let wide = "terminal:\r\n    fontSize: 14\r\n";
         assert_eq!(
@@ -8099,7 +8796,10 @@ mod tests {
     #[test]
     fn tabby_is_found_by_its_settings_file_and_put_back() {
         let f = Fake::new(Os::Linux, "/home/ann");
-        f.file("/home/ann/.config/tabby/config.yaml", "version: 1\nterminal:\n  font: 'Fira Code'\n  fontSize: 14\n");
+        f.file(
+            "/home/ann/.config/tabby/config.yaml",
+            "version: 1\nterminal:\n  font: 'Fira Code'\n  fontSize: 14\n",
+        );
         let fake = Arc::new(f);
         let posh = Posh::new(fake.clone());
         let s = posh.status();
@@ -8115,7 +8815,10 @@ mod tests {
         );
         assert!(posh.status().terminals[0].font_set);
         let undo = fake.text("/home/ann/.idlewalker/terminal-undo.txt");
-        assert!(undo.contains("tabby:") && undo.contains("\tterminal.font\t='Fira Code'\n"), "{undo}");
+        assert!(
+            undo.contains("tabby:") && undo.contains("\tterminal.font\t='Fira Code'\n"),
+            "{undo}"
+        );
 
         let mut log = Vec::new();
         assert!(posh.restore_terminal_fonts(false, &mut log), "{log:?}");
@@ -8132,12 +8835,18 @@ mod tests {
     #[test]
     fn windows_tabby_is_found_by_its_installer_and_its_settings_variable() {
         let mut f = Fake::new(Os::Windows, r"C:\Users\ann");
-        f.env.insert("LOCALAPPDATA".into(), r"C:\Users\ann\AppData\Local".into());
-        f.env.insert("TABBY_CONFIG_DIRECTORY".into(), r"D:\tabby-data".into());
+        f.env
+            .insert("LOCALAPPDATA".into(), r"C:\Users\ann\AppData\Local".into());
+        f.env
+            .insert("TABBY_CONFIG_DIRECTORY".into(), r"D:\tabby-data".into());
         f.file(r"C:\Users\ann\AppData\Local\Programs\Tabby\Tabby.exe", "");
         let posh = Posh::new(Arc::new(f));
         let s = posh.status();
-        let tabby = s.terminals.iter().find(|t| t.name == "Tabby").expect("Tabby listed");
+        let tabby = s
+            .terminals
+            .iter()
+            .find(|t| t.name == "Tabby")
+            .expect("Tabby listed");
         assert_eq!(tabby.target, r"D:\tabby-data\config.yaml");
     }
 
@@ -8163,8 +8872,12 @@ mod tests {
         assert_eq!(toml_get(&set, "fonts", "family").as_deref(), Some("\"X\""));
         assert_eq!(toml_set(&set, "fonts", "family", None), rio);
         let dotted = "fonts.family = \"a\"\n[fonts]\nsize = 1\n";
-        assert_eq!(toml_get(dotted, "fonts", "family").as_deref(), Some("\"a\""));
-        assert!(toml_set(dotted, "fonts", "family", Some("\"b\"")).starts_with("fonts.family = \"b\"\n"));
+        assert_eq!(
+            toml_get(dotted, "fonts", "family").as_deref(),
+            Some("\"a\"")
+        );
+        assert!(toml_set(dotted, "fonts", "family", Some("\"b\""))
+            .starts_with("fonts.family = \"b\"\n"));
         let warp = toml_set("", "appearance.text", "font_name", Some("\"X\""));
         assert_eq!(warp, "[appearance.text]\nfont_name = \"X\"\n");
         assert_eq!(toml_set(&warp, "appearance.text", "font_name", None), "");
@@ -8172,15 +8885,24 @@ mod tests {
         // The recipes read and judge them.
         let r = recipe("QTerminal").unwrap();
         assert!(
-            !recipe_font_set(r, "[General]\nfontFamily=MesloLGM Nerd Font\nfont=@Variant(old)\n"),
+            !recipe_font_set(
+                r,
+                "[General]\nfontFamily=MesloLGM Nerd Font\nfont=@Variant(old)\n"
+            ),
             "a legacy font key overrides the family"
         );
-        assert!(recipe_font_set(r, "[General]\nfontFamily=MesloLGM Nerd Font\n"));
+        assert!(recipe_font_set(
+            r,
+            "[General]\nfontFamily=MesloLGM Nerd Font\n"
+        ));
         assert!(recipe_font_set(
             recipe("Zed").unwrap(),
             "{ \"terminal\": { \"font_family\": \"Hack Nerd Font\" } }"
         ));
-        assert!(!recipe_font_set(recipe("Rio").unwrap(), "[fonts]\nfamily = \"Fira Code\"\n"));
+        assert!(!recipe_font_set(
+            recipe("Rio").unwrap(),
+            "[fonts]\nfamily = \"Fira Code\"\n"
+        ));
 
         // foot's first section has no name until it needs one.
         assert_eq!(
@@ -8195,10 +8917,16 @@ mod tests {
     #[test]
     fn hyper_conemu_terminator_and_x_resources_are_edited_and_put_back() {
         let js = "module.exports = {\n  config: {\n    fontSize: 12,\n    fontFamily: 'Menlo, \"DejaVu Sans Mono\", monospace',\n    cursorColor: 'red',\n  },\n  plugins: [],\n};\n";
-        assert_eq!(hyper_font(js).as_deref(), Some("'Menlo, \"DejaVu Sans Mono\", monospace'"));
+        assert_eq!(
+            hyper_font(js).as_deref(),
+            Some("'Menlo, \"DejaVu Sans Mono\", monospace'")
+        );
         assert!(!hyper_is_nerd(&hyper_font(js).unwrap()));
         let set = hyper_with_font(js, Some(HYPER_FONTS)).unwrap();
-        assert!(set.contains(&format!("    fontFamily: {HYPER_FONTS},\n")), "{set}");
+        assert!(
+            set.contains(&format!("    fontFamily: {HYPER_FONTS},\n")),
+            "{set}"
+        );
         assert!(hyper_is_nerd(&hyper_font(&set).unwrap()));
         assert_eq!(
             hyper_with_font(&set, Some("'Menlo, \"DejaVu Sans Mono\", monospace'")).unwrap(),
@@ -8206,7 +8934,10 @@ mod tests {
         );
         let bare = "module.exports = {\n  config: {\n    fontSize: 12,\n  },\n};\n";
         let added = hyper_with_font(bare, Some("'X'")).unwrap();
-        assert_eq!(added, "module.exports = {\n  config: {\n    fontFamily: 'X',\n    fontSize: 12,\n  },\n};\n");
+        assert_eq!(
+            added,
+            "module.exports = {\n  config: {\n    fontFamily: 'X',\n    fontSize: 12,\n  },\n};\n"
+        );
         assert_eq!(hyper_with_font(&added, None).unwrap(), bare);
         assert!(hyper_with_font("", Some("'X'")).is_err());
 
@@ -8219,7 +8950,11 @@ mod tests {
                 ("Work".to_string(), None)
             ]
         );
-        let set = conemu_with_font(&conemu_with_font(xml, ".Vanilla", Some(FONT_MONO)), "Work", Some(FONT_MONO));
+        let set = conemu_with_font(
+            &conemu_with_font(xml, ".Vanilla", Some(FONT_MONO)),
+            "Work",
+            Some(FONT_MONO),
+        );
         assert_eq!(
             conemu_fonts(&set),
             [
@@ -8230,14 +8965,21 @@ mod tests {
         assert!(set.contains("\t\t\t<value name=\"FontName\" type=\"string\" data=\"MesloLGM Nerd Font Mono\"/>\r\n\t\t</key>\r\n\t</key>"), "{set}");
         assert!(set.contains("data=\"not this one\""));
         assert_eq!(
-            conemu_with_font(&conemu_with_font(&set, "Work", None), ".Vanilla", Some("Consolas")),
+            conemu_with_font(
+                &conemu_with_font(&set, "Work", None),
+                ".Vanilla",
+                Some("Consolas")
+            ),
             xml
         );
 
         // Terminator: every profile under [profiles], with the file's own indents.
         let cfg = "[global_config]\n  title_hide_sizetext = True\n[profiles]\n  [[default]]\n    cursor_color = \"#aaaaaa\"\n    font = Mono 10\n  [[work]]\n    scrollback_lines = 5000\n[layouts]\n  [[default]]\n    [[[window0]]]\n      type = Window\n";
         assert_eq!(terminator_profiles(cfg), ["default", "work"]);
-        assert_eq!(terminator_get(cfg, "default", "font").as_deref(), Some("Mono 10"));
+        assert_eq!(
+            terminator_get(cfg, "default", "font").as_deref(),
+            Some("Mono 10")
+        );
         assert_eq!(terminator_get(cfg, "work", "font"), None);
         let mut set = cfg.to_string();
         for p in ["default", "work"] {
@@ -8261,15 +9003,24 @@ mod tests {
 
         // X resources, by whatever path and case the file uses.
         let xres = "! fonts\nxterm*faceName: DejaVu Sans Mono\nXTerm.vt100.faceSize: 12\nURxvt.font: xft:Hack:size=10\n";
-        assert_eq!(xres_get(xres, "XTerm", "faceName").as_deref(), Some("DejaVu Sans Mono"));
+        assert_eq!(
+            xres_get(xres, "XTerm", "faceName").as_deref(),
+            Some("DejaVu Sans Mono")
+        );
         assert_eq!(xres_get(xres, "XTerm", "faceSize").as_deref(), Some("12"));
-        assert_eq!(xres_get(xres, "URxvt", "font").as_deref(), Some("xft:Hack:size=10"));
+        assert_eq!(
+            xres_get(xres, "URxvt", "font").as_deref(),
+            Some("xft:Hack:size=10")
+        );
         let set = xres_set(xres, "XTerm", "faceName", Some(FONT_NAME));
         assert_eq!(
             set,
             "! fonts\nxterm*faceName: MesloLGM Nerd Font\nXTerm.vt100.faceSize: 12\nURxvt.font: xft:Hack:size=10\n"
         );
-        assert_eq!(xres_set(&set, "XTerm", "faceName", Some("DejaVu Sans Mono")), xres);
+        assert_eq!(
+            xres_set(&set, "XTerm", "faceName", Some("DejaVu Sans Mono")),
+            xres
+        );
         assert_eq!(xres_set("", "URxvt", "font", Some("x")), "URxvt*font: x\n");
         assert!(!xres_is("*faceName: x", "XTerm", "faceName"));
     }
@@ -8280,39 +9031,83 @@ mod tests {
         f.program("gsettings", "/usr/bin/gsettings");
         f.program("xrdb", "/usr/bin/xrdb");
         // MATE Terminal lists its profiles under its own key names.
-        f.answer("gsettings", "get org.mate.terminal.global profile-list", "['default', 'root']\n");
+        f.answer(
+            "gsettings",
+            "get org.mate.terminal.global profile-list",
+            "['default', 'root']\n",
+        );
         for id in ["default", "root"] {
             let p = format!("org.mate.terminal.profile:/org/mate/terminal/profiles/{id}/");
             f.answer("gsettings", &format!("get {p} use-system-font"), "true\n");
             f.answer("gsettings", &format!("get {p} font"), "'Monospace 12'\n");
         }
         // Ptyxis is known by its schema, GNOME Console by its program.
-        f.answer("gsettings", "get org.gnome.Ptyxis use-system-font", "true\n");
-        f.answer("gsettings", "get org.gnome.Ptyxis font-name", "'Monospace 10'\n");
+        f.answer(
+            "gsettings",
+            "get org.gnome.Ptyxis use-system-font",
+            "true\n",
+        );
+        f.answer(
+            "gsettings",
+            "get org.gnome.Ptyxis font-name",
+            "'Monospace 10'\n",
+        );
         f.program("kgx", "/usr/bin/kgx");
-        f.answer("gsettings", "get org.gnome.Console use-system-font", "true\n");
+        f.answer(
+            "gsettings",
+            "get org.gnome.Console use-system-font",
+            "true\n",
+        );
         f.answer("gsettings", "get org.gnome.Console custom-font", "''\n");
         f.answer("gsettings", "set", "");
         f.answer("gsettings", "reset", "");
         f.program("terminator", "/usr/bin/terminator"); // no config yet
         f.program("foot", "/usr/bin/foot");
-        f.file("/home/ann/.config/foot/foot.ini", "font=monospace:size=8\n\n[colors]\nforeground=ffffff\n");
+        f.file(
+            "/home/ann/.config/foot/foot.ini",
+            "font=monospace:size=8\n\n[colors]\nforeground=ffffff\n",
+        );
         f.program("lxterminal", "/usr/bin/lxterminal"); // no config yet
-        f.file("/home/ann/.config/qterminal.org/qterminal.ini", "[General]\nfontFamily=Hack\nfont=@Variant(old)\n");
+        f.file(
+            "/home/ann/.config/qterminal.org/qterminal.ini",
+            "[General]\nfontFamily=Hack\nfont=@Variant(old)\n",
+        );
         f.file("/home/ann/.hyper.js", "module.exports = {\n  config: {\n    fontSize: 12,\n    fontFamily: 'Menlo, monospace',\n  },\n};\n");
         f.program("zed", "/usr/bin/zed"); // no settings yet
-        f.file("/home/ann/.config/rio/config.toml", "[fonts]\nsize = 14.0\n");
+        f.file(
+            "/home/ann/.config/rio/config.toml",
+            "[fonts]\nsize = 14.0\n",
+        );
         f.program("xterm", "/usr/bin/xterm");
-        f.file("/home/ann/.Xresources", "xterm*faceName: DejaVu Sans Mono\nxterm*faceSize: 12\n");
+        f.file(
+            "/home/ann/.Xresources",
+            "xterm*faceName: DejaVu Sans Mono\nxterm*faceSize: 12\n",
+        );
         f.program("putty", "/usr/bin/putty");
-        f.file("/home/ann/.putty/sessions/work", "HostName=example.org\nFont=client:Monospace 10\n");
+        f.file(
+            "/home/ann/.putty/sessions/work",
+            "HostName=example.org\nFont=client:Monospace 10\n",
+        );
         let fake = Arc::new(f);
         let posh = Posh::new(fake.clone());
         let s = posh.status();
         let names: Vec<&str> = s.terminals.iter().map(|t| t.name.as_str()).collect();
         assert_eq!(
             names,
-            ["MATE Terminal", "Ptyxis", "GNOME Console", "Terminator", "LXTerminal", "QTerminal", "foot", "xterm", "PuTTY", "Hyper", "Rio", "Zed"]
+            [
+                "MATE Terminal",
+                "Ptyxis",
+                "GNOME Console",
+                "Terminator",
+                "LXTerminal",
+                "QTerminal",
+                "foot",
+                "xterm",
+                "PuTTY",
+                "Hyper",
+                "Rio",
+                "Zed"
+            ]
         );
         assert!(s.terminals.iter().all(|t| !t.font_set), "{:?}", s.terminals);
         assert_eq!(s.terminals[0].detail, "2 profiles");
@@ -8330,7 +9125,8 @@ mod tests {
             assert!(runs.iter().any(|r| r.ends_with(want)), "{want}: {runs:?}");
         }
         assert!(
-            runs.iter().any(|r| r.starts_with("/usr/bin/xrdb -merge ") && r.ends_with(".Xresources")),
+            runs.iter()
+                .any(|r| r.starts_with("/usr/bin/xrdb -merge ") && r.ends_with(".Xresources")),
             "{runs:?}"
         );
         assert_eq!(
@@ -8349,7 +9145,9 @@ mod tests {
             fake.text("/home/ann/.config/qterminal.org/qterminal.ini"),
             "[General]\nfontFamily=MesloLGM Nerd Font\n"
         );
-        assert!(fake.text("/home/ann/.hyper.js").contains(&format!("    fontFamily: {HYPER_FONTS},\n")));
+        assert!(fake
+            .text("/home/ann/.hyper.js")
+            .contains(&format!("    fontFamily: {HYPER_FONTS},\n")));
         let zed = fake.text("/home/ann/.config/zed/settings.json");
         assert_eq!(
             jsonc::get_string(&zed, &["terminal", "font_family"]).as_deref(),
@@ -8373,30 +9171,62 @@ mod tests {
         let by_file = |t: &TerminalStatus| {
             !matches!(t.kind, TerminalKind::MateTerminal | TerminalKind::Gsettings)
         };
-        assert!(after.terminals.iter().filter(|t| by_file(t)).all(|t| t.font_set), "{:?}", after.terminals);
+        assert!(
+            after
+                .terminals
+                .iter()
+                .filter(|t| by_file(t))
+                .all(|t| t.font_set),
+            "{:?}",
+            after.terminals
+        );
 
         let mut log = Vec::new();
         assert!(posh.restore_terminal_fonts(false, &mut log), "{log:?}");
         let runs = fake.runs();
-        assert!(runs.iter().any(|r| r.ends_with("root/ font 'Monospace 12'")), "{runs:?}");
-        assert!(runs.iter().any(|r| r.ends_with("set org.gnome.Ptyxis use-system-font true")));
-        assert!(runs.iter().any(|r| r.ends_with("set org.gnome.Console custom-font ''")));
+        assert!(
+            runs.iter()
+                .any(|r| r.ends_with("root/ font 'Monospace 12'")),
+            "{runs:?}"
+        );
+        assert!(runs
+            .iter()
+            .any(|r| r.ends_with("set org.gnome.Ptyxis use-system-font true")));
+        assert!(runs
+            .iter()
+            .any(|r| r.ends_with("set org.gnome.Console custom-font ''")));
         assert_eq!(fake.text("/home/ann/.config/terminator/config"), "");
         assert_eq!(
             fake.text("/home/ann/.config/foot/foot.ini"),
             "[main]\nfont=monospace:size=8\n\n[colors]\nforeground=ffffff\n"
         );
-        assert_eq!(fake.text("/home/ann/.config/lxterminal/lxterminal.conf"), "");
+        assert_eq!(
+            fake.text("/home/ann/.config/lxterminal/lxterminal.conf"),
+            ""
+        );
         let qt = fake.text("/home/ann/.config/qterminal.org/qterminal.ini");
-        assert_eq!(ini_get(&qt, "General", "fontFamily").as_deref(), Some("Hack"));
-        assert_eq!(ini_get(&qt, "General", "font").as_deref(), Some("@Variant(old)"));
+        assert_eq!(
+            ini_get(&qt, "General", "fontFamily").as_deref(),
+            Some("Hack")
+        );
+        assert_eq!(
+            ini_get(&qt, "General", "font").as_deref(),
+            Some("@Variant(old)")
+        );
         assert_eq!(
             fake.text("/home/ann/.hyper.js"),
             "module.exports = {\n  config: {\n    fontSize: 12,\n    fontFamily: 'Menlo, monospace',\n  },\n};\n"
         );
         let zed = fake.text("/home/ann/.config/zed/settings.json");
-        assert_eq!(jsonc::get_raw(&zed, &["terminal", "font_family"]), None, "{zed}");
-        assert_eq!(fake.text("/home/ann/.config/rio/config.toml"), "[fonts]\nsize = 14.0\n");
+        assert_eq!(
+            jsonc::get_raw(&zed, &["terminal", "font_family"]),
+            None,
+            "{zed}"
+        );
+        assert_eq!(
+            fake.text("/home/ann/.config/rio/config.toml"),
+            "[fonts]\nsize = 14.0\n"
+        );
         assert_eq!(
             fake.text("/home/ann/.Xresources"),
             "xterm*faceName: DejaVu Sans Mono\nxterm*faceSize: 12\n"
@@ -8405,16 +9235,21 @@ mod tests {
             fake.text("/home/ann/.putty/sessions/work"),
             "HostName=example.org\nFont=client:Monospace 10\n"
         );
-        assert!(fake.text("/home/ann/.idlewalker/terminal-undo.txt").is_empty());
+        assert!(fake
+            .text("/home/ann/.idlewalker/terminal-undo.txt")
+            .is_empty());
     }
 
     #[cfg(windows)]
     #[test]
     fn windows_conemu_putty_mintty_and_warp_are_set_and_put_back() {
         let mut f = Fake::new(Os::Windows, r"C:\Users\ann");
-        f.env.insert("LOCALAPPDATA".into(), r"C:\Users\ann\AppData\Local".into());
-        f.env.insert("APPDATA".into(), r"C:\Users\ann\AppData\Roaming".into());
-        f.env.insert("ProgramFiles".into(), r"C:\Program Files".into());
+        f.env
+            .insert("LOCALAPPDATA".into(), r"C:\Users\ann\AppData\Local".into());
+        f.env
+            .insert("APPDATA".into(), r"C:\Users\ann\AppData\Roaming".into());
+        f.env
+            .insert("ProgramFiles".into(), r"C:\Program Files".into());
         f.env.insert("USERNAME".into(), "ann".into());
         f.env.insert("CMDER_ROOT".into(), r"C:\tools\cmder".into());
         f.program("reg", r"C:\Windows\System32\reg.exe");
@@ -8439,12 +9274,23 @@ mod tests {
         let names: Vec<&str> = s.terminals.iter().map(|t| t.name.as_str()).collect();
         assert_eq!(
             names,
-            ["Console windows (cmd, PowerShell)", "ConEmu", "Cmder", "PuTTY", "Git Bash (mintty)", "MSYS2 (mintty)", "Warp"]
+            [
+                "Console windows (cmd, PowerShell)",
+                "ConEmu",
+                "Cmder",
+                "PuTTY",
+                "Git Bash (mintty)",
+                "MSYS2 (mintty)",
+                "Warp"
+            ]
         );
 
         let mut log = Vec::new();
         assert!(posh.set_terminal_fonts(&mut log), "{log:?}");
-        for file in [r"C:\Users\ann\AppData\Roaming\ConEmu.xml", r"C:\tools\cmder\config\user-ConEmu.xml"] {
+        for file in [
+            r"C:\Users\ann\AppData\Roaming\ConEmu.xml",
+            r"C:\tools\cmder\config\user-ConEmu.xml",
+        ] {
             assert_eq!(
                 conemu_fonts(&fake.text(file)),
                 [(".Vanilla".to_string(), Some(FONT_MONO.to_string()))]
@@ -8452,10 +9298,23 @@ mod tests {
         }
         let runs = fake.runs();
         assert!(runs.iter().any(|r| r.ends_with(r"add HKEY_CURRENT_USER\Software\SimonTatham\PuTTY\Sessions\Default%20Settings /v Font /t REG_SZ /d MesloLGM Nerd Font Mono /f")), "{runs:?}");
-        assert!(runs.iter().any(|r| r.contains(r"Default%20Settings /v FontIsBold /t REG_DWORD /d 0 /f")));
-        assert!(!runs.iter().any(|r| r.contains(r"Default%20Settings /v FontHeight")), "a height already there is kept");
-        assert_eq!(fake.text(r"C:\Users\ann\.minttyrc"), "BoldAsFont=no\nFont=MesloLGM Nerd Font Mono\n");
-        assert_eq!(fake.text(r"C:\msys64\home\ann\.minttyrc"), "Font=MesloLGM Nerd Font Mono\n");
+        assert!(runs
+            .iter()
+            .any(|r| r.contains(r"Default%20Settings /v FontIsBold /t REG_DWORD /d 0 /f")));
+        assert!(
+            !runs
+                .iter()
+                .any(|r| r.contains(r"Default%20Settings /v FontHeight")),
+            "a height already there is kept"
+        );
+        assert_eq!(
+            fake.text(r"C:\Users\ann\.minttyrc"),
+            "BoldAsFont=no\nFont=MesloLGM Nerd Font Mono\n"
+        );
+        assert_eq!(
+            fake.text(r"C:\msys64\home\ann\.minttyrc"),
+            "Font=MesloLGM Nerd Font Mono\n"
+        );
         assert_eq!(
             fake.text(r"C:\Users\ann\AppData\Local\warp\Warp\config\settings.toml"),
             "[appearance.text]\nfont_name = \"MesloLGM Nerd Font\"\n"
@@ -8465,14 +9324,25 @@ mod tests {
         assert!(posh.restore_terminal_fonts(false, &mut log), "{log:?}");
         assert_eq!(fake.text(r"C:\Users\ann\AppData\Roaming\ConEmu.xml"), xml);
         let runs = fake.runs();
-        assert!(runs.iter().any(|r| r.ends_with(r"Default%20Settings /v Font /t REG_SZ /d Courier New /f")), "{runs:?}");
+        assert!(
+            runs.iter()
+                .any(|r| r.ends_with(r"Default%20Settings /v Font /t REG_SZ /d Courier New /f")),
+            "{runs:?}"
+        );
         assert!(runs.iter().any(|r| r.ends_with(r"delete HKEY_CURRENT_USER\Software\SimonTatham\PuTTY\Sessions\Default%20Settings /v FontIsBold /f")));
         assert_eq!(fake.text(r"C:\Users\ann\.minttyrc"), "BoldAsFont=no\n");
         assert!(
-            !fake.files.lock().unwrap().contains_key(Path::new(r"C:\msys64\home\ann\.minttyrc")),
+            !fake
+                .files
+                .lock()
+                .unwrap()
+                .contains_key(Path::new(r"C:\msys64\home\ann\.minttyrc")),
             "a file made for the font alone goes"
         );
-        assert_eq!(fake.text(r"C:\Users\ann\AppData\Local\warp\Warp\config\settings.toml"), "");
+        assert_eq!(
+            fake.text(r"C:\Users\ann\AppData\Local\warp\Warp\config\settings.toml"),
+            ""
+        );
     }
 
     #[test]
@@ -8491,8 +9361,14 @@ mod tests {
         let keys = reg_parse(printed);
         assert_eq!(keys.len(), 3);
         assert_eq!(keys[0].path, "HKEY_CURRENT_USER\\Console");
-        assert_eq!(reg_value(&keys[0], "FaceName"), Some(("REG_SZ", "Consolas")));
-        assert_eq!(reg_value(&keys[0], "FontSize"), Some(("REG_DWORD", "0x100000")));
+        assert_eq!(
+            reg_value(&keys[0], "FaceName"),
+            Some(("REG_SZ", "Consolas"))
+        );
+        assert_eq!(
+            reg_value(&keys[0], "FontSize"),
+            Some(("REG_DWORD", "0x100000"))
+        );
         assert_eq!(reg_value(&keys[0], "EmptyValue"), Some(("REG_SZ", "")));
         assert_eq!(
             reg_value(&keys[1], "FaceName"),
@@ -8522,8 +9398,14 @@ mod tests {
         let (set, n) = wt_with_font(WT, "wt:x", FONT_NAME, &mut changes).unwrap();
         assert_eq!(n, 3);
         assert_eq!(wt_status(&set), (true, 3));
-        assert_eq!(jsonc::get_string(&set, &WT_FACE).as_deref(), Some(FONT_NAME));
-        assert_eq!(jsonc::get_raw(&set, &WT_COLOURS).as_deref(), Some("\"never\""));
+        assert_eq!(
+            jsonc::get_string(&set, &WT_FACE).as_deref(),
+            Some(FONT_NAME)
+        );
+        assert_eq!(
+            jsonc::get_raw(&set, &WT_COLOURS).as_deref(),
+            Some("\"never\"")
+        );
         assert!(!set.contains("fontFace"), "{set}");
         assert!(set.contains("\"face\": \"MesloLGM Nerd Font\", \"size\": 11"));
         // cmd follows the defaults, so it was left alone.
@@ -8548,11 +9430,17 @@ mod tests {
             Some("Cascadia Code")
         );
         assert_eq!(jsonc::get_raw(&back, &WT_COLOURS), None);
-        assert!(back.contains("\"face\": \"Consolas\", \"size\": 11"), "{back}");
+        assert!(
+            back.contains("\"face\": \"Consolas\", \"size\": 11"),
+            "{back}"
+        );
         assert!(back.contains("\"fontFace\": \"Lucida Console\""), "{back}");
         assert!(!back.contains("Nerd Font"), "{back}");
         // The font object that was made for the defaults is gone again.
-        assert_eq!(jsonc::get_raw(&back, &["profiles", "defaults", "font"]), None);
+        assert_eq!(
+            jsonc::get_raw(&back, &["profiles", "defaults", "font"]),
+            None
+        );
     }
 
     const ITERM: &str = "<dict>\n<key>New Bookmarks</key>\n<array>\n<dict>\n<key>Guid</key>\n<string>A-1</string>\n<key>Name</key>\n<string>Default</string>\n<key>Non Ascii Font</key>\n<string>Monaco 12</string>\n<key>Normal Font</key>\n<string>Menlo-Regular 13</string>\n</dict>\n<dict>\n<key>Guid</key>\n<string>B-2</string>\n<key>Normal Font</key>\n<string>MesloLGMNerdFontMono-Regular 11</string>\n</dict>\n</array>\n</dict>\n";
@@ -8632,16 +9520,39 @@ mod tests {
             plist_profile_names(&terminal_plist("Menlo-Regular")),
             ["Basic", "Pro"]
         );
-        assert!(!apple_terminal_font_is_nerd(&terminal_plist("Menlo-Regular"), "Basic"));
-        assert!(!apple_terminal_font_is_nerd(&terminal_plist("SFMonoTerminal-Regular"), "Basic"));
-        assert!(apple_terminal_font_is_nerd(&terminal_plist(FONT_MONO_POSTSCRIPT), "Basic"));
-        assert!(apple_terminal_font_is_nerd(&terminal_plist("MesloLGMNerdFontMono-Regular"), "Basic"));
-        assert!(!apple_terminal_font_is_nerd(&terminal_plist(FONT_MONO_POSTSCRIPT), "Pro"));
+        assert!(!apple_terminal_font_is_nerd(
+            &terminal_plist("Menlo-Regular"),
+            "Basic"
+        ));
+        assert!(!apple_terminal_font_is_nerd(
+            &terminal_plist("SFMonoTerminal-Regular"),
+            "Basic"
+        ));
+        assert!(apple_terminal_font_is_nerd(
+            &terminal_plist(FONT_MONO_POSTSCRIPT),
+            "Basic"
+        ));
+        assert!(apple_terminal_font_is_nerd(
+            &terminal_plist("MesloLGMNerdFontMono-Regular"),
+            "Basic"
+        ));
+        assert!(!apple_terminal_font_is_nerd(
+            &terminal_plist(FONT_MONO_POSTSCRIPT),
+            "Pro"
+        ));
         assert_eq!(base64_decode("aGVsbG8="), b"hello");
         // The real archive from a Mac, holding "SFMonoTerminal-Regular".
         let real = "<dict><key>Window Settings</key><dict><key>Basic</key><dict><key>Font</key><data>\nYnBsaXN0MDDUAQIDBAUGBwpYJHZlcnNpb25ZJGFyY2hpdmVyVCR0b3BYJG9iamVjdHMSAAGGoF8QD05TS2V5ZWRBcmNoaXZlctEICVRyb290gAGkCwwVFlUkbnVsbNQNDg8QERITFFZOU1NpemVYTlNmRmxhZ3NWTlNOYW1lViRjbGFzcyNAJgAAAAAAABAQgAKAA18QFlNGTW9ub1Rlcm1pbmFsLVJlZ3VsYXLSFxgZGlokY2xhc3NuYW1lWCRjbGFzc2VzVk5TRm9udKIZG1hOU09iamVjdAgRGiQpMjdJTFFTWF5nbnd+hY6QkpStsr3GzdAAAAAAAAABAQAAAAAAAAAcAAAAAAAAAAAAAAAAAAAA2Q==\n</data></dict></dict></dict>";
         assert!(!apple_terminal_font_is_nerd(real, "Basic"));
-        assert!(String::from_utf8_lossy(&base64_decode(real.split("<data>").nth(1).unwrap().split("</data>").next().unwrap())).contains("SFMonoTerminal-Regular"));
+        assert!(String::from_utf8_lossy(&base64_decode(
+            real.split("<data>")
+                .nth(1)
+                .unwrap()
+                .split("</data>")
+                .next()
+                .unwrap()
+        ))
+        .contains("SFMonoTerminal-Regular"));
     }
 
     #[test]
@@ -8679,8 +9590,7 @@ mod tests {
             .filter(|r| r.starts_with("/usr/bin/osascript") && r.contains("set font name of"))
             .last()
             .expect("Terminal was told through AppleScript");
-        assert!(script
-            .contains("set font name of default settings to \"MesloLGMNFM-Regular\""));
+        assert!(script.contains("set font name of default settings to \"MesloLGMNFM-Regular\""));
         assert!(script.contains("settings set \"Basic\""), "{script}");
         assert!(script.contains("settings set \"Pro\""), "{script}");
         assert!(runs
@@ -8707,7 +9617,11 @@ mod tests {
 
         let mut log = Vec::new();
         assert!(posh.restore_terminal_fonts(false, &mut log), "{log:?}");
-        assert!(log.iter().any(|l| l.starts_with("iTerm2: fonts put back in 3")), "{log:?}");
+        assert!(
+            log.iter()
+                .any(|l| l.starts_with("iTerm2: fonts put back in 3")),
+            "{log:?}"
+        );
         assert!(!posh.status().undo_available);
     }
 
@@ -8729,7 +9643,11 @@ mod tests {
         // Font from then on.
         let menlo = "Basic\tMenlo-Regular\nPro\tMenlo-Regular\n";
         let nerd = "Basic\tMesloLGMNFM-Regular\nPro\tMesloLGMNFM-Regular\n";
-        f.answer_in_turn("osascript", &format!("-e {APPLE_TERMINAL_LIST}"), &[menlo, nerd]);
+        f.answer_in_turn(
+            "osascript",
+            &format!("-e {APPLE_TERMINAL_LIST}"),
+            &[menlo, nerd],
+        );
         let fake = Arc::new(f);
         let posh = Posh::new(fake.clone());
         assert!(!posh.status().terminals[0].font_set);
@@ -8740,11 +9658,23 @@ mod tests {
 
         let mut log = Vec::new();
         assert!(posh.set_terminal_fonts(&mut log), "{log:?}");
-        assert!(log.iter().any(|l| l.starts_with("Terminal: font set to MesloLGM Nerd Font Mono in 2 profiles")), "{log:?}");
-        let sets = fake.runs().iter().filter(|r| r.contains("set font name of")).count();
+        assert!(
+            log.iter()
+                .any(|l| l
+                    .starts_with("Terminal: font set to MesloLGM Nerd Font Mono in 2 profiles")),
+            "{log:?}"
+        );
+        let sets = fake
+            .runs()
+            .iter()
+            .filter(|r| r.contains("set font name of"))
+            .count();
         assert_eq!(sets, 1, "the first name was taken, so no other was tried");
         let s = posh.status();
-        assert!(s.terminals[0].font_set, "Terminal's own answer counts, not the stale file");
+        assert!(
+            s.terminals[0].font_set,
+            "Terminal's own answer counts, not the stale file"
+        );
         assert_eq!(s.terminals[0].detail, "2 profiles");
 
         // Terminal not running: the file is all there is, and it still says Menlo.
@@ -8795,15 +9725,32 @@ mod tests {
             .cloned()
             .collect();
         assert_eq!(scripts.len(), 3, "{scripts:?}");
-        assert!(scripts[0].contains("to \"MesloLGMNFM-Reg\""), "{}", scripts[0]);
-        assert!(scripts[1].contains("to \"MesloLGMNFM-Regular\""), "{}", scripts[1]);
-        assert!(scripts[2].contains("set font name of default settings to \"MesloLGMNerdFontMono-Regular\""));
-        assert!(scripts[2].contains("set font name of settings set \"Basic\" to \"MesloLGMNerdFontMono-Regular\""));
-        assert!(!log.iter().any(|l| l.contains("macOS does not see the font")), "{log:?}");
+        assert!(
+            scripts[0].contains("to \"MesloLGMNFM-Reg\""),
+            "{}",
+            scripts[0]
+        );
+        assert!(
+            scripts[1].contains("to \"MesloLGMNFM-Regular\""),
+            "{}",
+            scripts[1]
+        );
+        assert!(scripts[2]
+            .contains("set font name of default settings to \"MesloLGMNerdFontMono-Regular\""));
+        assert!(scripts[2].contains(
+            "set font name of settings set \"Basic\" to \"MesloLGMNerdFontMono-Regular\""
+        ));
+        assert!(
+            !log.iter()
+                .any(|l| l.contains("macOS does not see the font")),
+            "{log:?}"
+        );
         // The record still holds the font that was there before any of that.
         let record = undo_parse(&fake.text("/Users/ann/.idlewalker/terminal-undo.txt"));
-        assert!(record.iter().any(|u| u.target == "terminal.app:Basic"
-            && u.before.as_deref() == Some("Menlo-Regular")));
+        assert!(record
+            .iter()
+            .any(|u| u.target == "terminal.app:Basic"
+                && u.before.as_deref() == Some("Menlo-Regular")));
 
         // A Terminal that never takes it: every name is tried, and the window says so
         // instead of claiming the font was set.
@@ -8828,15 +9775,27 @@ mod tests {
         let mut log = Vec::new();
         assert!(!posh.set_terminal_fonts(&mut log), "{log:?}");
         assert_eq!(
-            fake.runs().iter().filter(|r| r.contains("set font name of")).count(),
+            fake.runs()
+                .iter()
+                .filter(|r| r.contains("set font name of"))
+                .count(),
             APPLE_TERMINAL_FONT_NAMES.len()
         );
-        assert!(log.iter().any(|l| l.starts_with("Terminal: macOS does not see the font")), "{log:?}");
         assert!(
-            log.iter().any(|l| l.starts_with("Terminal: did not take the font; it still reports Basic (Menlo-Regular).")),
+            log.iter()
+                .any(|l| l.starts_with("Terminal: macOS does not see the font")),
             "{log:?}"
         );
-        assert!(!log.iter().any(|l| l.starts_with("Terminal: font set")), "{log:?}");
+        assert!(
+            log.iter().any(|l| l.starts_with(
+                "Terminal: did not take the font; it still reports Basic (Menlo-Regular)."
+            )),
+            "{log:?}"
+        );
+        assert!(
+            !log.iter().any(|l| l.starts_with("Terminal: font set")),
+            "{log:?}"
+        );
     }
 
     #[test]
@@ -8927,7 +9886,9 @@ mod tests {
             "['aaa', 'bbb']\n",
         );
         for id in ["aaa", "bbb"] {
-            let p = format!("org.gnome.Terminal.Legacy.Profile:/org/gnome/terminal/legacy/profiles:/:{id}/");
+            let p = format!(
+                "org.gnome.Terminal.Legacy.Profile:/org/gnome/terminal/legacy/profiles:/:{id}/"
+            );
             f.answer("gsettings", &format!("get {p} use-system-font"), "true\n");
             f.answer("gsettings", &format!("get {p} font"), "'Monospace 12'\n");
         }
@@ -8945,8 +9906,14 @@ mod tests {
         assert!(posh.set_terminal_fonts(&mut log), "{log:?}");
         let runs = fake.runs();
         for id in ["aaa", "bbb"] {
-            assert!(runs.iter().any(|r| r.contains(&format!("{id}/ font MesloLGM Nerd Font 11"))), "{runs:?}");
-            assert!(runs.iter().any(|r| r.contains(&format!("{id}/ use-system-font false"))));
+            assert!(
+                runs.iter()
+                    .any(|r| r.contains(&format!("{id}/ font MesloLGM Nerd Font 11"))),
+                "{runs:?}"
+            );
+            assert!(runs
+                .iter()
+                .any(|r| r.contains(&format!("{id}/ use-system-font false"))));
         }
         assert_eq!(
             fake.text("/home/ann/.config/kitty/kitty.conf"),
@@ -8957,9 +9924,17 @@ mod tests {
         let mut log = Vec::new();
         assert!(posh.restore_terminal_fonts(false, &mut log), "{log:?}");
         let runs = fake.runs();
-        assert!(runs.iter().any(|r| r.ends_with("aaa/ font 'Monospace 12'")), "{runs:?}");
-        assert!(runs.iter().any(|r| r.ends_with("bbb/ use-system-font true")));
-        assert_eq!(fake.text("/home/ann/.config/kitty/kitty.conf"), "font_size 12\n");
+        assert!(
+            runs.iter().any(|r| r.ends_with("aaa/ font 'Monospace 12'")),
+            "{runs:?}"
+        );
+        assert!(runs
+            .iter()
+            .any(|r| r.ends_with("bbb/ use-system-font true")));
+        assert_eq!(
+            fake.text("/home/ann/.config/kitty/kitty.conf"),
+            "font_size 12\n"
+        );
     }
 
     #[test]
@@ -9041,11 +10016,20 @@ mod tests {
             shells: vec![Shell::Elvish, Shell::Xonsh, Shell::Yash],
         });
         assert!(done.ok, "{:?}", done.log);
-        assert!(fake.text("/home/ann/.elvish/rc.elv").contains("init elvish"));
+        assert!(fake
+            .text("/home/ann/.elvish/rc.elv")
+            .contains("init elvish"));
         assert!(fake.text("/home/ann/.elvish/rc.elv").starts_with("use re"));
         assert!(fake.text("/home/ann/.xonshrc").contains("init xonsh"));
         assert!(fake.text("/home/ann/.yashrc").contains("init yash"));
-        let set = |s: Shell| done.status.shells.iter().find(|x| x.shell == s).unwrap().configured;
+        let set = |s: Shell| {
+            done.status
+                .shells
+                .iter()
+                .find(|x| x.shell == s)
+                .unwrap()
+                .configured
+        };
         assert!(set(Shell::Elvish) && set(Shell::Xonsh) && set(Shell::Yash));
         let done = posh.perform(&Task::Remove);
         assert!(done.ok, "{:?}", done.log);
@@ -9075,7 +10059,10 @@ mod tests {
             &format!("{user}/globalStorage/storage.json"),
             "{ \"userDataProfiles\": [ { \"location\": \"1a2b\", \"name\": \"Work\" } ] }",
         );
-        f.file("/home/ann/.var/app/com.vscodium.codium/config/VSCodium/User/settings.json", "{}\n");
+        f.file(
+            "/home/ann/.var/app/com.vscodium.codium/config/VSCodium/User/settings.json",
+            "{}\n",
+        );
         let fake = Arc::new(f);
         let posh = Posh::new(fake.clone());
         let names: Vec<String> = posh
@@ -9085,13 +10072,26 @@ mod tests {
             .filter(|t| t.kind == TerminalKind::VsCode)
             .map(|t| t.name)
             .collect();
-        assert_eq!(names, ["VS Code", "VS Code: Work", "VS Code: 3c4d", "VSCodium (Flatpak)"]);
+        assert_eq!(
+            names,
+            [
+                "VS Code",
+                "VS Code: Work",
+                "VS Code: 3c4d",
+                "VSCodium (Flatpak)"
+            ]
+        );
         let done = posh.perform(&Task::SetTerminalFonts);
         assert!(done.ok, "{:?}", done.log);
         for file in [work.clone(), format!("{user}/profiles/3c4d/settings.json")] {
             assert!(fake.text(&file).contains(FONT_NAME), "{file}");
         }
-        assert!(done.status.terminals.iter().filter(|t| t.kind == TerminalKind::VsCode).all(|t| t.font_set));
+        assert!(done
+            .status
+            .terminals
+            .iter()
+            .filter(|t| t.kind == TerminalKind::VsCode)
+            .all(|t| t.font_set));
         let done = posh.perform(&Task::RestoreTerminalFonts);
         assert!(done.ok, "{:?}", done.log);
         assert!(!fake.text(&work).contains(FONT_NAME));
@@ -9127,34 +10127,66 @@ mod tests {
         let done = posh.perform(&Task::SetLook(full_look()));
         assert!(done.ok, "{:?}", done.log);
         let k = fake.text(kitty);
-        assert!(k.contains("font_size 13") && k.contains("cursor_shape beam") && k.contains("background_opacity 0.90"), "{k}");
-        assert!(k.contains("color15 #DCDFE4") && k.contains("disable_ligatures always"), "{k}");
+        assert!(
+            k.contains("font_size 13")
+                && k.contains("cursor_shape beam")
+                && k.contains("background_opacity 0.90"),
+            "{k}"
+        );
+        assert!(
+            k.contains("color15 #DCDFE4") && k.contains("disable_ligatures always"),
+            "{k}"
+        );
         let a = fake.text(alacritty);
-        assert!(a.contains("size = 13") && a.contains("shape = \"Beam\"") && a.contains("[colors.bright]"), "{a}");
+        assert!(
+            a.contains("size = 13")
+                && a.contains("shape = \"Beam\"")
+                && a.contains("[colors.bright]"),
+            "{a}"
+        );
         let o = fake.text(foot);
-        assert!(o.contains("font=MesloLGM Nerd Font:size=13") && o.contains("regular0=282C34"), "{o}");
+        assert!(
+            o.contains("font=MesloLGM Nerd Font:size=13") && o.contains("regular0=282C34"),
+            "{o}"
+        );
         assert!(fake.text(xfce).contains("TERMINAL_CURSOR_SHAPE_IBEAM"));
         let p = fake.text(konsole);
-        assert!(p.contains("CursorShape=1") && p.contains("ColorScheme=IdleWalker-OneHalfDark"), "{p}");
-        assert!(fake.text("/home/ann/.local/share/konsole/IdleWalker-OneHalfDark.colorscheme").contains("Opacity=0.90"));
+        assert!(
+            p.contains("CursorShape=1") && p.contains("ColorScheme=IdleWalker-OneHalfDark"),
+            "{p}"
+        );
+        assert!(fake
+            .text("/home/ann/.local/share/konsole/IdleWalker-OneHalfDark.colorscheme")
+            .contains("Opacity=0.90"));
         let done = posh.perform(&Task::RestoreTerminalFonts);
         assert!(done.ok, "{:?}", done.log);
         assert!(fake.text(kitty).contains("font_size 10") && !fake.text(kitty).contains("color15"));
-        assert!(fake.text(alacritty).contains("size = 9") && !fake.text(alacritty).contains("Beam"));
+        assert!(
+            fake.text(alacritty).contains("size = 9") && !fake.text(alacritty).contains("Beam")
+        );
         assert!(fake.text(xfce).contains("MiscCursorShape=X"));
-        assert!(fake.text(konsole).contains("Font=Hack,9") && !fake.text(konsole).contains("CursorShape"));
+        assert!(
+            fake.text(konsole).contains("Font=Hack,9")
+                && !fake.text(konsole).contains("CursorShape")
+        );
     }
 
     #[test]
     fn foot_gets_the_colour_section_its_version_reads() {
-        for (printed, section) in [("foot version: 1.25.0 +pgo", "colors"), ("foot version: 1.28.0 +pgo", "colors-dark")] {
+        for (printed, section) in [
+            ("foot version: 1.25.0 +pgo", "colors"),
+            ("foot version: 1.28.0 +pgo", "colors-dark"),
+        ] {
             let mut f = linux_box();
             f.file("/usr/bin/foot", "");
             f.program("foot", "/usr/bin/foot");
             f.answer("foot", "--version", printed);
             f.file("/home/ann/.config/foot/foot.ini", "[main]\nfont=X:size=9\n");
             let fake = Arc::new(f);
-            let look = Look { colours: Some(0), ..Look::default() };
+            let look = Look {
+                colours: Some(0),
+                ..Look::default()
+            };
             let done = Posh::new(fake.clone()).perform(&Task::SetLook(look));
             assert!(done.ok, "{:?}", done.log);
             let text = fake.text("/home/ann/.config/foot/foot.ini");
@@ -9171,12 +10203,20 @@ mod tests {
     #[test]
     fn vscode_gets_the_look_and_keeps_its_other_colours() {
         let e = vscode_edits(&full_look());
-        let mut text = "{\n    \"workbench.colorCustomizations\": { \"tab.border\": \"#111111\" }\n}\n".to_string();
+        let mut text =
+            "{\n    \"workbench.colorCustomizations\": { \"tab.border\": \"#111111\" }\n}\n"
+                .to_string();
         for (s, k, v) in &e {
             text = shape_set(Shape::Json, &text, s, k, Some(v)).unwrap();
         }
-        assert!(text.contains("tab.border") && text.contains("terminal.ansiBrightWhite"), "{text}");
-        assert_eq!(jsonc::get_raw(&text, &["terminal.integrated.cursorStyle"]).as_deref(), Some("\"line\""));
+        assert!(
+            text.contains("tab.border") && text.contains("terminal.ansiBrightWhite"),
+            "{text}"
+        );
+        assert_eq!(
+            jsonc::get_raw(&text, &["terminal.integrated.cursorStyle"]).as_deref(),
+            Some("\"line\"")
+        );
         assert_eq!(vscode_profile_name(Shell::Zsh, Os::MacOs), Some("zsh"));
     }
 
@@ -9184,10 +10224,16 @@ mod tests {
     fn colours_are_converted_for_the_console_and_gsettings() {
         assert_eq!(bgr("#102030"), 0x302010);
         let g = gsettings_edits(TerminalKind::GnomeTerminal, &full_look());
-        assert!(g.iter().any(|(k, v)| k == "palette" && v.starts_with("['#282C34', ")));
-        assert!(g.iter().any(|(k, v)| k == "background-transparency-percent" && v == "10"));
+        assert!(g
+            .iter()
+            .any(|(k, v)| k == "palette" && v.starts_with("['#282C34', ")));
+        assert!(g
+            .iter()
+            .any(|(k, v)| k == "background-transparency-percent" && v == "10"));
         let m = gsettings_edits(TerminalKind::MateTerminal, &full_look());
-        assert!(m.iter().any(|(k, v)| k == "palette" && v.starts_with("#282C34:")));
+        assert!(m
+            .iter()
+            .any(|(k, v)| k == "palette" && v.starts_with("#282C34:")));
     }
 
     #[cfg(windows)]
@@ -9195,7 +10241,8 @@ mod tests {
     fn windows_terminal_gets_the_look_in_defaults_and_overriding_profiles() {
         let path = r"C:\Users\ann\AppData\Local\Packages\Microsoft.WindowsTerminal_8wekyb3d8bbwe\LocalState\settings.json";
         let mut f = Fake::new(Os::Windows, r"C:\Users\ann");
-        f.env.insert("LOCALAPPDATA".into(), r"C:\Users\ann\AppData\Local".into());
+        f.env
+            .insert("LOCALAPPDATA".into(), r"C:\Users\ann\AppData\Local".into());
         f.env.insert("SystemRoot".into(), r"C:\Windows".into());
         f.file(path, "{ \"profiles\": { \"defaults\": {}, \"list\": [ { \"name\": \"Command Prompt\", \"guid\": \"{c}\", \"opacity\": 50 }, { \"name\": \"X\", \"guid\": \"{x}\" } ] } }\n");
         let fake = Arc::new(f);
@@ -9203,19 +10250,43 @@ mod tests {
         let mut look = full_look();
         look.default_shell = Some(Shell::Cmd);
         let done = posh.perform(&Task::SetLook(look));
-        assert!(done.log.iter().any(|l| l.contains("Windows Terminal: look changed")), "{:?}", done.log);
+        assert!(
+            done.log
+                .iter()
+                .any(|l| l.contains("Windows Terminal: look changed")),
+            "{:?}",
+            done.log
+        );
         let t = fake.text(path);
-        assert_eq!(jsonc::get_raw(&t, &["profiles", "defaults", "font", "size"]).as_deref(), Some("13"));
-        assert_eq!(jsonc::get_raw(&t, &["profiles", "defaults", "colorScheme"]).as_deref(), Some("\"One Half Dark\""));
-        assert_eq!(jsonc::get_string(&t, &["defaultProfile"]).as_deref(), Some("{c}"));
+        assert_eq!(
+            jsonc::get_raw(&t, &["profiles", "defaults", "font", "size"]).as_deref(),
+            Some("13")
+        );
+        assert_eq!(
+            jsonc::get_raw(&t, &["profiles", "defaults", "colorScheme"]).as_deref(),
+            Some("\"One Half Dark\"")
+        );
+        assert_eq!(
+            jsonc::get_string(&t, &["defaultProfile"]).as_deref(),
+            Some("{c}")
+        );
         let first = jsonc::objects_in(&t, &WT_LIST)[0];
-        assert_eq!(jsonc::get_raw_at(&t, first, &["opacity"]).as_deref(), Some("90"));
+        assert_eq!(
+            jsonc::get_raw_at(&t, first, &["opacity"]).as_deref(),
+            Some("90")
+        );
         posh.perform(&Task::RestoreTerminalFonts);
         let t = fake.text(path);
         let first = jsonc::objects_in(&t, &WT_LIST)[0];
-        assert_eq!(jsonc::get_raw_at(&t, first, &["opacity"]).as_deref(), Some("50"));
+        assert_eq!(
+            jsonc::get_raw_at(&t, first, &["opacity"]).as_deref(),
+            Some("50")
+        );
         assert_eq!(jsonc::get_raw(&t, &["defaultProfile"]), None);
-        assert_eq!(jsonc::get_raw(&t, &["profiles", "defaults", "colorScheme"]), None);
+        assert_eq!(
+            jsonc::get_raw(&t, &["profiles", "defaults", "colorScheme"]),
+            None
+        );
     }
 
     #[test]
@@ -9234,7 +10305,12 @@ mod tests {
         assert!(fake.text(rox).contains("font=MesloLGM Nerd Font 11"));
         assert!(fake.text(lily).contains("font_name=MesloLGM Nerd Font 11"));
         assert!(fake.text(key).contains("font-name='MesloLGM Nerd Font 11'"));
-        assert!(done.status.terminals.iter().filter(|t| t.name == "Ptyxis (Flatpak)").all(|t| t.font_set));
+        assert!(done
+            .status
+            .terminals
+            .iter()
+            .filter(|t| t.name == "Ptyxis (Flatpak)")
+            .all(|t| t.font_set));
     }
 
     #[test]
@@ -9246,11 +10322,16 @@ mod tests {
     #[test]
     fn the_wsl_script_sets_up_with_the_theme_and_only_clears_without() {
         let set = wsl_script(Some(Some("/mnt/c/x.omp.json")), false);
-        assert!(set.contains("--config '\\''/mnt/c/x.omp.json'\\''"), "{set}");
+        assert!(
+            set.contains("--config '\\''/mnt/c/x.omp.json'\\''"),
+            "{set}"
+        );
         assert!(set.contains(INSTALL_SH));
         assert!(set.contains(BEGIN) && !set.contains("@"));
         let clear = wsl_script(None, false);
-        assert!(clear.contains("clear_block") && !clear.contains("curl") && !clear.contains("rm -f"));
+        assert!(
+            clear.contains("clear_block") && !clear.contains("curl") && !clear.contains("rm -f")
+        );
         assert!(wsl_script(None, true).contains("rm -f"));
     }
 
@@ -9258,7 +10339,8 @@ mod tests {
     #[test]
     fn wsl_is_set_up_in_every_distro_and_cleared() {
         let mut f = Fake::new(Os::Windows, r"C:\Users\ann");
-        f.env.insert("LOCALAPPDATA".into(), r"C:\Users\ann\AppData\Local".into());
+        f.env
+            .insert("LOCALAPPDATA".into(), r"C:\Users\ann\AppData\Local".into());
         f.env.insert("SystemRoot".into(), r"C:\Windows".into());
         let omp = r"C:\Users\ann\AppData\Local\Microsoft\WindowsApps\oh-my-posh.exe";
         f.file(omp, "");
@@ -9274,17 +10356,32 @@ mod tests {
         let row = st.shells.iter().find(|s| s.shell == Shell::Wsl).unwrap();
         assert_eq!(row.shown, "Ubuntu");
         assert!(!row.configured);
-        let done = posh.perform(&Task::Apply { theme: None, shells: vec![Shell::Wsl] });
+        let done = posh.perform(&Task::Apply {
+            theme: None,
+            shells: vec![Shell::Wsl],
+        });
         assert!(done.ok, "{:?}", done.log);
-        assert!(done.status.shells.iter().any(|s| s.shell == Shell::Wsl && s.configured));
+        assert!(done
+            .status
+            .shells
+            .iter()
+            .any(|s| s.shell == Shell::Wsl && s.configured));
         {
             let runs = fake.runs.lock().unwrap();
-            assert!(runs.iter().any(|r| r.ends_with("-d Ubuntu -e sh /mnt/c/script.sh")), "{runs:?}");
+            assert!(
+                runs.iter()
+                    .any(|r| r.ends_with("-d Ubuntu -e sh /mnt/c/script.sh")),
+                "{runs:?}"
+            );
             assert!(!runs.iter().any(|r| r.contains("docker-desktop")));
         }
         let done = posh.perform(&Task::Remove);
         assert!(done.ok, "{:?}", done.log);
-        assert!(done.status.shells.iter().any(|s| s.shell == Shell::Wsl && !s.configured));
+        assert!(done
+            .status
+            .shells
+            .iter()
+            .any(|s| s.shell == Shell::Wsl && !s.configured));
     }
 
     #[cfg(windows)]
@@ -9297,44 +10394,88 @@ mod tests {
         f.file(r"C:\msys64\usr\bin\zsh.exe", "");
         f.file(r"C:\cygwin64\bin\bash.exe", "");
         let st = Posh::new(Arc::new(f)).status();
-        let of = |s: Shell| st.shells.iter().find(|x| x.shell == s).map(|x| x.profile.clone());
-        assert_eq!(of(Shell::Msys2Bash), Some(PathBuf::from(r"C:\msys64\home\ann\.bashrc")));
-        assert_eq!(of(Shell::Msys2Zsh), Some(PathBuf::from(r"C:\msys64\home\ann\.zshrc")));
-        assert_eq!(of(Shell::CygwinBash), Some(PathBuf::from(r"C:\cygwin64\home\ann\.bashrc")));
+        let of = |s: Shell| {
+            st.shells
+                .iter()
+                .find(|x| x.shell == s)
+                .map(|x| x.profile.clone())
+        };
+        assert_eq!(
+            of(Shell::Msys2Bash),
+            Some(PathBuf::from(r"C:\msys64\home\ann\.bashrc"))
+        );
+        assert_eq!(
+            of(Shell::Msys2Zsh),
+            Some(PathBuf::from(r"C:\msys64\home\ann\.zshrc"))
+        );
+        assert_eq!(
+            of(Shell::CygwinBash),
+            Some(PathBuf::from(r"C:\cygwin64\home\ann\.bashrc"))
+        );
         assert_eq!(of(Shell::Msys2Fish), None);
     }
 
     #[test]
     fn tilda_windows_and_cosmic_are_set_and_put_back() {
         let f = linux_box();
-        f.file("/home/ann/.config/tilda/config_0", "font = \"Monospace 13\"\nmax_width=3\n");
+        f.file(
+            "/home/ann/.config/tilda/config_0",
+            "font = \"Monospace 13\"\nmax_width=3\n",
+        );
         f.file("/home/ann/.config/tilda/config_1", "font = \"Hack 9\"\n");
         let cosmic = "/home/ann/.config/cosmic/com.system76.CosmicTerm/v1/font_name";
         f.file(cosmic, "\"Noto Sans Mono\"");
         let fake = Arc::new(f);
         let posh = Posh::new(fake.clone());
-        let names: Vec<String> = posh.status().terminals.into_iter().map(|t| t.name).collect();
-        assert!(["Tilda", "Tilda #2", "COSMIC Terminal"].iter().all(|n| names.iter().any(|x| x == n)), "{names:?}");
+        let names: Vec<String> = posh
+            .status()
+            .terminals
+            .into_iter()
+            .map(|t| t.name)
+            .collect();
+        assert!(
+            ["Tilda", "Tilda #2", "COSMIC Terminal"]
+                .iter()
+                .all(|n| names.iter().any(|x| x == n)),
+            "{names:?}"
+        );
         let done = posh.perform(&Task::SetTerminalFonts);
         assert!(done.ok, "{:?}", done.log);
-        assert!(fake.text("/home/ann/.config/tilda/config_1").contains("\"MesloLGM Nerd Font 11\""));
-        assert!(fake.text("/home/ann/.config/tilda/config_0").contains("max_width=3"));
+        assert!(fake
+            .text("/home/ann/.config/tilda/config_1")
+            .contains("\"MesloLGM Nerd Font 11\""));
+        assert!(fake
+            .text("/home/ann/.config/tilda/config_0")
+            .contains("max_width=3"));
         assert_eq!(fake.text(cosmic).trim(), "\"MesloLGM Nerd Font Mono\"");
-        assert!(done.status.terminals.iter().filter(|t| t.name.starts_with("Tilda") || t.name.starts_with("COSMIC")).all(|t| t.font_set));
+        assert!(done
+            .status
+            .terminals
+            .iter()
+            .filter(|t| t.name.starts_with("Tilda") || t.name.starts_with("COSMIC"))
+            .all(|t| t.font_set));
         let done = posh.perform(&Task::RestoreTerminalFonts);
         assert!(done.ok, "{:?}", done.log);
         assert_eq!(fake.text(cosmic).trim(), "\"Noto Sans Mono\"");
-        assert!(fake.text("/home/ann/.config/tilda/config_1").contains("Hack 9"));
+        assert!(fake
+            .text("/home/ann/.config/tilda/config_1")
+            .contains("Hack 9"));
     }
 
     #[test]
     fn jetbrains_files_are_written_and_put_back() {
-        assert_eq!(xml_font(&xml_with_font("", "ConsoleFont", Some("X"))).as_deref(), Some("X"));
+        assert_eq!(
+            xml_font(&xml_with_font("", "ConsoleFont", Some("X"))).as_deref(),
+            Some("X")
+        );
         let own = "<application>\n  <component name=\"ConsoleFont\">\n    <option name=\"VERSION\" value=\"1\" />\n    <option name=\"FONT_FAMILY\" value=\"Hack\" />\n    <option name=\"FONT_SIZE\" value=\"14\" />\n  </component>\n</application>\n";
         let set = xml_with_font(own, "ConsoleFont", Some(FONT_MONO));
         assert_eq!(xml_font(&set).as_deref(), Some(FONT_MONO));
         assert!(set.contains("FONT_SIZE"));
-        assert_eq!(xml_with_font(&set, "ConsoleFont", Some("Hack")).replace("    <option", "<option"), own.replace("    <option", "<option"));
+        assert_eq!(
+            xml_with_font(&set, "ConsoleFont", Some("Hack")).replace("    <option", "<option"),
+            own.replace("    <option", "<option")
+        );
 
         let options = "/home/ann/.config/JetBrains/PyCharm2025.2/options";
         let f = linux_box();
@@ -9342,21 +10483,37 @@ mod tests {
         f.file(&format!("{options}/console-font.xml"), own);
         // Chrome's folder and an unrelated Google product are not IDEs.
         f.file("/home/ann/.config/Google/Earth/options/a.xml", "");
-        f.file("/home/ann/.config/Google/AndroidStudio2025.1/options/a.xml", "");
+        f.file(
+            "/home/ann/.config/Google/AndroidStudio2025.1/options/a.xml",
+            "",
+        );
         let fake = Arc::new(f);
         let posh = Posh::new(fake.clone());
         let st = posh.status();
-        let row = st.terminals.iter().find(|t| t.kind == TerminalKind::JetBrains).unwrap();
+        let row = st
+            .terminals
+            .iter()
+            .find(|t| t.kind == TerminalKind::JetBrains)
+            .unwrap();
         assert_eq!(row.detail, "2 IDEs");
         assert!(!row.font_set);
         let done = posh.perform(&Task::SetTerminalFonts);
         assert!(done.ok, "{:?}", done.log);
-        assert!(fake.text(&format!("{options}/terminal-font.xml")).contains("TerminalFontOptions"));
-        assert!(done.status.terminals.iter().any(|t| t.kind == TerminalKind::JetBrains && t.font_set));
+        assert!(fake
+            .text(&format!("{options}/terminal-font.xml"))
+            .contains("TerminalFontOptions"));
+        assert!(done
+            .status
+            .terminals
+            .iter()
+            .any(|t| t.kind == TerminalKind::JetBrains && t.font_set));
         let done = posh.perform(&Task::RestoreTerminalFonts);
         assert!(done.ok, "{:?}", done.log);
         assert!(!fake.exists(Path::new(&format!("{options}/terminal-font.xml"))));
-        assert_eq!(xml_font(&fake.text(&format!("{options}/console-font.xml"))).as_deref(), Some("Hack"));
+        assert_eq!(
+            xml_font(&fake.text(&format!("{options}/console-font.xml"))).as_deref(),
+            Some("Hack")
+        );
     }
 
     #[test]
@@ -9369,11 +10526,19 @@ mod tests {
         let fake = Arc::new(f);
         let posh = Posh::new(fake.clone());
         let st = posh.status();
-        let row = st.terminals.iter().find(|t| t.kind == TerminalKind::ITermDynamic).unwrap();
+        let row = st
+            .terminals
+            .iter()
+            .find(|t| t.kind == TerminalKind::ITermDynamic)
+            .unwrap();
         assert_eq!(row.detail, "2 profiles");
         assert!(!row.font_set);
         let done = posh.perform(&Task::SetTerminalFonts);
-        assert!(fake.text(&file).contains("MesloLGMNFM-Regular 14"), "{:?}", done.log);
+        assert!(
+            fake.text(&file).contains("MesloLGMNFM-Regular 14"),
+            "{:?}",
+            done.log
+        );
         assert_eq!(fake.text(&format!("{dir}/binary.plist")), "bplist");
         posh.perform(&Task::RestoreTerminalFonts);
         assert!(fake.text(&file).contains("Monaco 14"));
@@ -9389,7 +10554,11 @@ mod tests {
         f.program("st", "/usr/bin/st");
         let st = Posh::new(Arc::new(f)).status();
         assert!(st.terminals.iter().any(|t| t.name == "VS Code (portable)"));
-        let hand = st.terminals.iter().find(|t| t.kind == TerminalKind::ByHand).unwrap();
+        let hand = st
+            .terminals
+            .iter()
+            .find(|t| t.kind == TerminalKind::ByHand)
+            .unwrap();
         assert_eq!(hand.name, "st");
         assert!(hand.detail.contains("config.h"));
     }
@@ -9440,12 +10609,19 @@ mod tests {
         // Exits cleanly having installed nothing.
         let mut f = linux_box();
         f.file(MESLO_FILE, "");
-        f.answer("oh-my-posh", "font", "No matching font families were installed.\n");
+        f.answer(
+            "oh-my-posh",
+            "font",
+            "No matching font families were installed.\n",
+        );
         let done = Posh::new(Arc::new(f)).perform(&Task::InstallFont);
         assert!(!done.ok, "{:?}", done.log);
         // Another Nerd Font is no substitute.
         let mut f = linux_box();
-        f.file("/home/ann/.local/share/fonts/FiraCodeNerdFont-Regular.ttf", "");
+        f.file(
+            "/home/ann/.local/share/fonts/FiraCodeNerdFont-Regular.ttf",
+            "",
+        );
         f.answer("oh-my-posh", "font", "done\n");
         let done = Posh::new(Arc::new(f)).perform(&Task::InstallFont);
         assert!(!done.ok && !done.status.font_installed, "{:?}", done.log);
@@ -9453,7 +10629,13 @@ mod tests {
 
     #[test]
     fn the_font_install_is_headless_only_where_that_flag_exists() {
-        for (help, last) in [("      --headless   install font without TUI\n", "--headless"), ("      --zip-folder string\n", "meslo")] {
+        for (help, last) in [
+            (
+                "      --headless   install font without TUI\n",
+                "--headless",
+            ),
+            ("      --zip-folder string\n", "meslo"),
+        ] {
             let mut f = linux_box();
             f.answer("oh-my-posh", "font", "done\n");
             f.answers.insert(
@@ -9478,7 +10660,10 @@ mod tests {
         let mut f = linux_box();
         f.file("/home/ann/.local/share/fonts/Other.ttf", "");
         f.answer("oh-my-posh", "font", "done\n");
-        for name in ["MesloLGMNerdFont-Regular.ttf", "MesloLGMNerdFontMono-Regular.ttf"] {
+        for name in [
+            "MesloLGMNerdFont-Regular.ttf",
+            "MesloLGMNerdFontMono-Regular.ttf",
+        ] {
             f.drops.push((
                 "font".into(),
                 PathBuf::from(format!("/home/ann/.local/share/fonts/{name}")),
@@ -9491,9 +10676,9 @@ mod tests {
         assert!(done.status.font_installed);
         let record = undo_parse(&fake.text("/home/ann/.idlewalker/terminal-undo.txt"));
         assert_eq!(record.len(), 2);
-        assert!(record
-            .iter()
-            .all(|u| u.target.starts_with("font-file:/home/ann/.local/share/fonts/Meslo")));
+        assert!(record.iter().all(|u| u
+            .target
+            .starts_with("font-file:/home/ann/.local/share/fonts/Meslo")));
         // Putting the terminals back keeps the font; uninstalling takes it, and only it.
         let done = posh.perform(&Task::RestoreTerminalFonts);
         assert!(done.ok, "{:?}", done.log);
@@ -9588,30 +10773,57 @@ mod tests {
         assert_eq!(wt_status(&wt), (true, 1));
         // The root key and the subkey with a font of its own were set; the other was not.
         let runs = fake.runs();
-        assert!(runs.iter().any(|r| r.contains(r"add HKEY_CURRENT_USER\Console /v FaceName /t REG_SZ /d MesloLGM Nerd Font Mono /f")), "{runs:?}");
-        assert!(runs.iter().any(|r| r.contains(r"add HKEY_CURRENT_USER\Console\%SystemRoot%_system32_cmd.exe /v FaceName")));
+        assert!(
+            runs.iter().any(|r| r.contains(
+                r"add HKEY_CURRENT_USER\Console /v FaceName /t REG_SZ /d MesloLGM Nerd Font Mono /f"
+            )),
+            "{runs:?}"
+        );
+        assert!(runs.iter().any(|r| r
+            .contains(r"add HKEY_CURRENT_USER\Console\%SystemRoot%_system32_cmd.exe /v FaceName")));
         // The debug file holds every run of the task, what it printed, and the state after.
         let debug = fake.text(r"C:\Users\ann\.idlewalker\terminal-debug.txt");
-        assert!(debug.starts_with("IdleWalker terminal prompt: SetTerminalFonts\nOS: Windows\n"), "{debug}");
+        assert!(
+            debug.starts_with("IdleWalker terminal prompt: SetTerminalFonts\nOS: Windows\n"),
+            "{debug}"
+        );
         assert!(debug.contains("$ C:\\Windows\\System32\\reg.exe add HKEY_CURRENT_USER\\Console /v FaceName /t REG_SZ /d 'MesloLGM Nerd Font Mono' /f\n  exit: ok"), "{debug}");
         assert!(debug.contains("---- the state afterwards ----"));
-        assert!(done.log.iter().any(|l| l.ends_with("terminal-debug.txt.")), "{:?}", done.log);
-        assert!(!runs.iter().any(|r| r.contains(r"add HKEY_CURRENT_USER\Console\Git Bash")));
-        assert!(runs.iter().any(|r| r.contains(r"add HKEY_CURRENT_USER\Console /v FontSize")));
+        assert!(
+            done.log.iter().any(|l| l.ends_with("terminal-debug.txt.")),
+            "{:?}",
+            done.log
+        );
+        assert!(!runs
+            .iter()
+            .any(|r| r.contains(r"add HKEY_CURRENT_USER\Console\Git Bash")));
+        assert!(runs
+            .iter()
+            .any(|r| r.contains(r"add HKEY_CURRENT_USER\Console /v FontSize")));
         assert!(!runs.iter().any(|r| r.contains(r"cmd.exe /v FontSize")));
         // The record knows what was there, and the console's old font goes back by it.
         let record = undo_parse(&fake.text(r"C:\Users\ann\.idlewalker\terminal-undo.txt"));
-        assert!(record.iter().any(|u| u.target == r"console:HKEY_CURRENT_USER\Console"
-            && u.key == "FaceName"
-            && u.before.as_deref() == Some("REG_SZ Consolas")));
-        assert!(record.iter().any(|u| u.target == r"console:HKEY_CURRENT_USER\Console"
-            && u.key == "FontSize"
-            && u.before.is_none()));
+        assert!(record
+            .iter()
+            .any(|u| u.target == r"console:HKEY_CURRENT_USER\Console"
+                && u.key == "FaceName"
+                && u.before.as_deref() == Some("REG_SZ Consolas")));
+        assert!(record
+            .iter()
+            .any(|u| u.target == r"console:HKEY_CURRENT_USER\Console"
+                && u.key == "FontSize"
+                && u.before.is_none()));
         let done = posh.perform(&Task::RestoreTerminalFonts);
         assert!(done.ok, "{:?}", done.log);
         let runs = fake.runs();
-        assert!(runs.iter().any(|r| r.contains(r"add HKEY_CURRENT_USER\Console /v FaceName /t REG_SZ /d Consolas /f")), "{runs:?}");
-        assert!(runs.iter().any(|r| r.contains(r"delete HKEY_CURRENT_USER\Console /v FontSize /f")));
+        assert!(
+            runs.iter().any(|r| r
+                .contains(r"add HKEY_CURRENT_USER\Console /v FaceName /t REG_SZ /d Consolas /f")),
+            "{runs:?}"
+        );
+        assert!(runs
+            .iter()
+            .any(|r| r.contains(r"delete HKEY_CURRENT_USER\Console /v FontSize /f")));
         assert_eq!(
             fake.text(r"C:\Users\ann\AppData\Roaming\Code\User\settings.json"),
             "{\n    \"a\": 1\n}\n"

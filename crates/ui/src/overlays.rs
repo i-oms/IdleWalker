@@ -2,7 +2,7 @@
 //! the "Display N" badges. Click-through sprite windows like the walkers, drawn in software.
 use super::gfx::{self, Canvas, Font};
 use crate::prelude::*;
-use idlewalker_application::{MouseButtons, Screen};
+use idlewalker_application::{Indicator, MouseButtons, Screen};
 use std::time::Instant;
 
 fn pixels(s: &mut Surface, w: i32, h: i32) -> &'static mut [u32] {
@@ -150,8 +150,6 @@ const SPOT_OPACITY: f64 = 0.65;
 /// How long the spot stays after the button is let go, and how long it then takes to fade.
 const SPOT_HOLD_MS: f64 = 500.0;
 const SPOT_FADE_MS: f64 = 250.0;
-const SPOT_LEFT: u32 = 0xFFE100;
-const SPOT_RIGHT: u32 = 0x2D7DFF;
 
 struct Spot {
     /// Whether the left button made it; otherwise the right.
@@ -163,10 +161,12 @@ struct Spot {
     released: Option<Instant>,
 }
 
-/// Shows where the mouse was clicked: yellow for the left button, blue for the right.
+/// Shows where the mouse was clicked: one colour for the left button, another for the right.
 /// The spot follows a drag, stays where the button was let go, then fades. It is sized
 /// by the display scaling of whichever monitor the cursor is on.
 pub struct ClickHighlight {
+    /// The spot's colour for the left and the right button, as 0xRRGGBB.
+    pub colours: (u32, u32),
     window: Box<dyn SpriteSink>,
     surface: Surface,
     spot: Option<Spot>,
@@ -180,6 +180,10 @@ pub struct ClickHighlight {
 impl ClickHighlight {
     pub fn new(sprites: &SpriteFactory) -> Self {
         ClickHighlight {
+            colours: (
+                Indicator::LeftClick.default_colour() as u32,
+                Indicator::RightClick.default_colour() as u32,
+            ),
             window: sprites(),
             surface: Surface::new(),
             spot: None,
@@ -248,7 +252,11 @@ impl ClickHighlight {
             self.window.hide();
             return;
         }
-        let colour = if spot.left { SPOT_LEFT } else { SPOT_RIGHT };
+        let colour = if spot.left {
+            self.colours.0
+        } else {
+            self.colours.1
+        } & 0xFFFFFF;
         let radius = ((SPOT_RADIUS * spot.scale).round() as i32).max(4);
         let alpha = (255.0 * SPOT_OPACITY * opacity).round() as u32;
         let size = 2 * (radius + 2);
@@ -347,7 +355,6 @@ const BEAM_OUTER: f64 = 280.0;
 /// How much wider the middle starts, before it closes in on the cursor.
 const BEAM_ZOOM: f64 = 1.2;
 const BEAM_DARK: f64 = 0.62;
-const BEAM_RING: u32 = 0xFAD61C;
 const BEAM_OPEN_MS: f64 = 350.0;
 const BEAM_CLOSE_MS: f64 = 200.0;
 /// It goes away by itself once the cursor has rested this long.
@@ -364,19 +371,23 @@ struct Beam {
 /// leaving it in a clear, ringed middle. The halo follows the cursor over every monitor,
 /// sized by each one's display scaling, and goes at a click, a key, or a few seconds' rest.
 pub struct FindCursor {
+    /// The ring's colour, as 0xRRGGBB.
+    pub ring: u32,
     window: Box<dyn SpriteSink>,
     surface: Surface,
     taps: DoubleTap,
     key_was: bool,
     beam: Option<Beam>,
-    /// What the surface holds: the middle's and the halo's radius in pixels, and strength.
-    drawn: Option<(i32, i32, u32)>,
+    /// What the surface holds: the middle's and the halo's radius in pixels, strength and
+    /// the ring's colour.
+    drawn: Option<(i32, i32, u32, u32)>,
     shown_at: Option<(i32, i32)>,
 }
 
 impl FindCursor {
     pub fn new(sprites: &SpriteFactory) -> Self {
         FindCursor {
+            ring: Indicator::FindRing.default_colour() as u32,
             window: sprites(),
             surface: Surface::new(),
             taps: DoubleTap::default(),
@@ -456,7 +467,7 @@ impl FindCursor {
         let strength = (255.0 * (0.25 + 0.75 * open) * fade).round() as u32;
         let size = 2 * (outer + 1);
         let at = (b.at.x - size / 2, b.at.y - size / 2);
-        let look = Some((hole, outer, strength));
+        let look = Some((hole, outer, strength, self.ring));
         if look != self.drawn {
             self.drawn = look;
             self.shown_at = None;
@@ -468,6 +479,7 @@ impl FindCursor {
                 outer as f64,
                 (3.0 * scale).max(2.0),
                 strength as f64 / 255.0,
+                self.ring,
             );
             self.surface.touch(0, 0, size, size);
         }
@@ -480,12 +492,12 @@ impl FindCursor {
 
 /// The dark halo, premultiplied: clear inside `hole`, darkest just outside it and fading
 /// to nothing at `outer`, with a bright ring on the edge so it shows on a dark screen too.
-fn halo(px: &mut [u32], size: i32, hole: f64, outer: f64, ring_w: f64, strength: f64) {
+fn halo(px: &mut [u32], size: i32, hole: f64, outer: f64, ring_w: f64, strength: f64, colour: u32) {
     let center = size as f64 / 2.0;
     let (r, g, b) = (
-        (BEAM_RING >> 16 & 255) as f64,
-        (BEAM_RING >> 8 & 255) as f64,
-        (BEAM_RING & 255) as f64,
+        (colour >> 16 & 255) as f64,
+        (colour >> 8 & 255) as f64,
+        (colour & 255) as f64,
     );
     for y in 0..size {
         let dy = y as f64 + 0.5 - center;
@@ -824,6 +836,27 @@ mod tests {
             panic!("not shown");
         };
         assert_eq!(middle, 0xA61D51A6);
+    }
+
+    #[test]
+    fn the_spot_takes_the_chosen_colours() {
+        let (mut h, log) = highlight();
+        h.colours = (0xFF0000, 0x00FF00);
+        h.tick(Point::new(100, 100), LEFT, scale_at);
+        // Held still, a new colour alone redraws it.
+        h.colours.0 = 0x0000FF;
+        h.tick(Point::new(100, 100), LEFT, scale_at);
+        h.tick(Point::new(100, 100), RIGHT, scale_at);
+        let middles: Vec<u32> = log
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|s| match s {
+                Shown::At(_, _, _, middle) => *middle,
+                Shown::Hidden => 0,
+            })
+            .collect();
+        assert_eq!(middles, [0xA6A60000, 0xA60000A6, 0xA600A600]);
     }
 
     #[test]

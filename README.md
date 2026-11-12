@@ -100,12 +100,14 @@ cargo build --release
   lock the screen, turn the monitor off, and more.
 - 🔆 **Brightness panel.** Adjust every monitor from the tray, including **external monitors over
   DDC/CI**, and use the mouse wheel to fine-tune.
-- 🟡 **Click highlight.** Tick *Highlight mouse clicks* and every click shows a spot under the
+- 🟡 **Click highlight.** Turn on *Highlight mouse clicks* and every click shows a spot under the
   cursor, yellow for the left button and blue for the right, on whichever monitor you click.
   Unlike the walkers it shows in recordings and screen shares, which is what it is for.
+  Both colours are yours to pick in the menu.
 - 🔦 **Find cursor.** Tick *Find cursor* and press Ctrl twice: a dark halo closes in on the
   cursor, wherever it is on your monitors. A click, a key or a few seconds' rest sends it away.
-  The key is yours to pick in the menu: Ctrl, Shift or Alt (Option on a Mac).
+  The key is yours to pick in the menu: Ctrl, Shift or Alt (Option on a Mac). So is the
+  colour of the ring.
 - 💻 **Terminal prompt.** A window that sets up [Oh My Posh](https://ohmyposh.dev) for you:
   installs or updates it, fetches its themes, puts the one you pick into every shell you have
   (PowerShell, Windows PowerShell, bash, zsh, fish, Command Prompt through Clink, nu), installs
