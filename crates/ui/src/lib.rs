@@ -23,11 +23,13 @@ pub(crate) mod prelude {
 
 use crate::prelude::*;
 use dialogs::{
-    BrainDialog, BrightnessPanel, ColourDialog, Dialog, Kind, Outcome, TrayPlace, UpdateDialog,
+    BrainDialog, BrightnessPanel, ColourDialog, ColourOf, Dialog, Kind, Outcome, TrayPlace,
+    UpdateDialog,
 };
 use gfx::Font;
 use idlewalker_application::{
-    Brains, BrightnessInfo, Desktop, Journal, Posh, Screen, Session, UpdateState, Updates,
+    Brains, BrightnessInfo, Desktop, Indicator, Journal, Posh, Screen, Session, UpdateState,
+    Updates,
 };
 use overlays::{AboutToast, ClickHighlight, CornerRipple, DisplayBadges, FindCursor};
 use std::collections::HashMap;
@@ -359,6 +361,11 @@ impl App {
                 let _ = desktop.mouse_buttons(); // a click from before it was on is not news
                 ClickHighlight::new(sprites)
             });
+            let colours = self.session.choices().indicator_colours;
+            h.colours = (
+                colours[Indicator::LeftClick as usize] as u32,
+                colours[Indicator::RightClick as usize] as u32,
+            );
             let displays = self.session.displays();
             h.tick(self.session.cursor(), desktop.mouse_buttons(), |p| {
                 displays.screen_at(p).dpi_scale
@@ -375,6 +382,7 @@ impl App {
                 let _ = desktop.modifier_down(key); // a press from before it was on is not news
                 FindCursor::new(sprites)
             });
+            f.ring = self.session.choices().indicator_colours[Indicator::FindRing as usize] as u32;
             let down = desktop.modifier_down(key);
             let other = (down || f.watching()) && desktop.other_key_down(key);
             let button = desktop.mouse_button_down();
@@ -440,7 +448,7 @@ impl App {
         // The choices are the session's; what is left opens or closes something.
         if !self.session.apply(id) {
             match id {
-                "dress-custom" => self.open_colour(el),
+                "dress-custom" => self.open_colour(el, ColourOf::Dress),
                 "menu" => self.toggle_menu(el),
                 "brightness" => self.toggle_brightness(el),
                 "brains" => self.open_brains(el),
@@ -457,7 +465,13 @@ impl App {
                     }
                 }
                 "exit" => el.exit(),
-                _ => {}
+                _ => {
+                    let custom = id.strip_suffix("-custom");
+                    if let Some(which) = Indicator::ALL.into_iter().find(|i| Some(i.id()) == custom)
+                    {
+                        self.open_colour(el, ColourOf::Indicator(which));
+                    }
+                }
             }
         }
         self.update_menu();
@@ -484,29 +498,33 @@ impl App {
             .dpi_scale
     }
 
-    fn open_colour(&mut self, el: &ActiveEventLoop) {
-        if let Some(d) = self
-            .dialogs
-            .values()
-            .find(|d| matches!(d.kind, Kind::Colour(_)))
-        {
-            d.window.focus_window();
-            return;
+    fn open_colour(&mut self, el: &ActiveEventLoop, of: ColourOf) {
+        // One picker at a time: asking for another colour replaces it.
+        let open = self.dialogs.iter().find_map(|(id, d)| match &d.kind {
+            Kind::Colour(c) => Some((*id, c.of)),
+            _ => None,
+        });
+        if let Some((id, showing)) = open {
+            if showing == of {
+                self.dialogs[&id].window.focus_window();
+                return;
+            }
+            self.close_dialog(id);
         }
         let scale = self.scale_at_cursor();
-        let d = self.session.choices().dress;
-        let start = if d == Settings::RANDOM_DRESS {
-            SETTINGS_DRESS_COLORS[0]
-        } else {
-            d
+        let choices = self.session.choices();
+        let start = match of {
+            ColourOf::Dress if choices.dress == Settings::RANDOM_DRESS => SETTINGS_DRESS_COLORS[0],
+            ColourOf::Dress => choices.dress,
+            ColourOf::Indicator(which) => choices.indicator_colours[which as usize],
         };
         let size = ((320.0 * scale) as u32, (290.0 * scale) as u32);
         self.open_kind(
             el,
-            "Overalls colour",
+            of.title(),
             None,
             size,
-            Kind::Colour(ColourDialog::new(start)),
+            Kind::Colour(ColourDialog::new(of, start)),
         );
     }
 
@@ -793,9 +811,12 @@ impl ApplicationHandler<UserEvent> for App {
                 }
                 self.on_menu(&item, el);
             }
-            Outcome::Dress(c) => {
+            Outcome::Colour(of, c) => {
                 self.close_dialog(id);
-                self.session.choose_dress(c);
+                match of {
+                    ColourOf::Dress => self.session.choose_dress(c),
+                    ColourOf::Indicator(which) => self.session.choose_indicator_colour(which, c),
+                }
                 self.update_menu();
             }
         }

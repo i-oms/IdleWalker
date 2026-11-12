@@ -464,16 +464,13 @@ impl PoshDialog {
             }
             c.text_fit(f, right, y, right_w, st.terminal_note, small, gfx::DIM);
             y += line;
-            let settable = st
-                .terminals
-                .iter()
-                .any(|t| {
-                    !matches!(
-                        t.kind,
-                        idlewalker_application::posh::TerminalKind::BuiltIn
-                            | idlewalker_application::posh::TerminalKind::ByHand
-                    )
-                });
+            let settable = st.terminals.iter().any(|t| {
+                !matches!(
+                    t.kind,
+                    idlewalker_application::posh::TerminalKind::BuiltIn
+                        | idlewalker_application::posh::TerminalKind::ByHand
+                )
+            });
             if settable && btn(c, f, right, y, px(220.0), "Use the font in these terminals") {
                 next = Some((Task::SetTerminalFonts, "Setting the terminal fonts..."));
             }
@@ -642,12 +639,27 @@ impl PoshDialog {
             v
         };
         let rows: [(&str, Vec<String>); 6] = [
-            ("Font size", with_keep(SIZES.iter().map(u32::to_string).collect())),
-            ("Colours", with_keep(PALETTES.iter().map(|p| p.name.to_string()).collect())),
-            ("Cursor", with_keep(vec!["Block".into(), "Bar".into(), "Underline".into()])),
-            ("Opacity", with_keep(OPACITIES.iter().map(|o| format!("{o}%")).collect())),
+            (
+                "Font size",
+                with_keep(SIZES.iter().map(u32::to_string).collect()),
+            ),
+            (
+                "Colours",
+                with_keep(PALETTES.iter().map(|p| p.name.to_string()).collect()),
+            ),
+            (
+                "Cursor",
+                with_keep(vec!["Block".into(), "Bar".into(), "Underline".into()]),
+            ),
+            (
+                "Opacity",
+                with_keep(OPACITIES.iter().map(|o| format!("{o}%")).collect()),
+            ),
             ("Ligatures", with_keep(vec!["On".into(), "Off".into()])),
-            ("Default shell", with_keep(shells.iter().map(|s| s.name().to_string()).collect())),
+            (
+                "Default shell",
+                with_keep(shells.iter().map(|s| s.name().to_string()).collect()),
+            ),
         ];
         c.text(f, left, px(14.0), "Terminal appearance", title, gfx::ACCENT);
         let what = self.busy.unwrap_or("Applies to every terminal listed that has the setting; the log says what each one took.");
@@ -664,7 +676,15 @@ impl PoshDialog {
             }
             let colour = if pick == 0 { gfx::DIM } else { gfx::WHITE };
             let shown = self.look_picks[i] % n;
-            c.text_fit(f, x + arrow + px(12.0), y + px(6.0), value_w - px(24.0), &options[shown], text, colour);
+            c.text_fit(
+                f,
+                x + arrow + px(12.0),
+                y + px(6.0),
+                value_w - px(24.0),
+                &options[shown],
+                text,
+                colour,
+            );
             if button(c, f, m, x + arrow + value_w, y, arrow, bh, s, ">") && idle {
                 self.look_picks[i] = (pick + 1) % n;
             }
@@ -693,7 +713,18 @@ impl PoshDialog {
         if button(c, f, m, left, y, px(170.0), bh, s, "Apply to the terminals") && idle {
             self.start(Task::SetLook(look), "Changing how the terminals look...");
         }
-        if button(c, f, m, left + px(180.0), y, px(190.0), bh, s, "Put the terminals back") && idle {
+        if button(
+            c,
+            f,
+            m,
+            left + px(180.0),
+            y,
+            px(190.0),
+            bh,
+            s,
+            "Put the terminals back",
+        ) && idle
+        {
             self.start(Task::RestoreTerminalFonts, "Putting the terminals back...");
         }
         if button(c, f, m, left + width - px(90.0), y, px(90.0), bh, s, "Back") {
@@ -706,7 +737,15 @@ impl PoshDialog {
         let shown = ((log_h - px(8.0)) / log_line).max(1) as usize;
         let start = self.log.len().saturating_sub(shown);
         for (n, entry) in self.log[start..].iter().enumerate() {
-            c.text_fit(f, left + px(8.0), y + px(4.0) + n as i32 * log_line, width - px(16.0), entry, small, gfx::WHITE);
+            c.text_fit(
+                f,
+                left + px(8.0),
+                y + px(4.0) + n as i32 * log_line,
+                width - px(16.0),
+                entry,
+                small,
+                gfx::WHITE,
+            );
         }
     }
 }

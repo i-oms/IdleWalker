@@ -15,6 +15,6 @@ pub use ports::{
     PreferenceStore, ReleaseFeed, RunResult, Screen, Workstation,
 };
 pub use posh::Posh;
-pub use preferences::Preferences;
+pub use preferences::{Indicator, Preferences};
 pub use session::{Choices, CornerFire, Session, SessionPorts, TickReport};
 pub use updates::{UpdateState, Updates};

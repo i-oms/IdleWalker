@@ -6,7 +6,7 @@
 use super::UserEvent;
 use crate::prelude::*;
 pub use idlewalker_application::Choices;
-use idlewalker_application::{Desktop, Modifier};
+use idlewalker_application::{Desktop, Indicator, Modifier};
 use winit::event_loop::EventLoopProxy;
 
 #[derive(Clone)]
@@ -75,6 +75,52 @@ fn describe_dress(rgb: i32) -> String {
     match is_named_dress(rgb) {
         Some(i) => SETTINGS_DRESS_NAMES[i].clone(),
         None => format!("Custom #{:06X}", rgb),
+    }
+}
+
+/// The colours offered for the cursor indicators: bright ones, to show on any screen.
+const INDICATOR_COLOURS: [(&str, i32); 9] = [
+    ("Yellow", 0xFFE100),
+    ("Blue", 0x2D7DFF),
+    ("Red", 0xFF3B30),
+    ("Green", 0x34C759),
+    ("Orange", 0xFF9500),
+    ("Pink", 0xFF2D95),
+    ("Purple", 0xAF52DE),
+    ("Cyan", 0x32C8E6),
+    ("White", 0xFFFFFF),
+];
+
+/// A group for choosing one indicator's colour: "Left click: Yellow", say.
+fn indicator_colour(c: &Choices, which: Indicator, label: &str, enabled: bool) -> Node {
+    let chosen = c.indicator_colours[which as usize];
+    let named = INDICATOR_COLOURS.iter().find(|(_, rgb)| *rgb == chosen);
+    let mut children: Vec<Node> = INDICATOR_COLOURS
+        .iter()
+        .map(|(name, rgb)| {
+            check(
+                format!("{}:{}", which.id(), rgb),
+                *name,
+                true,
+                *rgb == chosen,
+            )
+        })
+        .collect();
+    children.push(Node::Sep);
+    children.push(check(
+        format!("{}-custom", which.id()),
+        "Custom...",
+        true,
+        named.is_none(),
+    ));
+    let shown = match named {
+        Some((name, _)) => name.to_string(),
+        None => format!("Custom #{:06X}", chosen),
+    };
+    Node::Sub {
+        label: format!("{}: {}", label, shown),
+        enabled,
+        children,
     }
 }
 
@@ -207,6 +253,20 @@ pub fn build(c: &Choices, desktop: &dyn Desktop) -> Vec<Node> {
             key == c.find_key,
         ));
     }
+    find.push(Node::Sep);
+    find.push(indicator_colour(
+        c,
+        Indicator::FindRing,
+        "Ring colour",
+        c.find_cursor,
+    ));
+
+    let clicks = vec![
+        check("click-highlight", "Enabled", true, c.click_highlight),
+        Node::Sep,
+        indicator_colour(c, Indicator::LeftClick, "Left click", c.click_highlight),
+        indicator_colour(c, Indicator::RightClick, "Right click", c.click_highlight),
+    ];
 
     vec![
         check("walkers", "Walkers", true, c.walkers),
@@ -236,12 +296,11 @@ pub fn build(c: &Choices, desktop: &dyn Desktop) -> Vec<Node> {
         Node::Sep,
         item("brightness", "Brightness..."),
         item("posh", "Terminal prompt..."),
-        check(
-            "click-highlight",
-            "Highlight mouse clicks",
-            true,
-            c.click_highlight,
-        ),
+        Node::Sub {
+            label: "Highlight mouse clicks".into(),
+            enabled: true,
+            children: clicks,
+        },
         Node::Sub {
             label: format!("Find cursor: {} twice", desktop.modifier_name(c.find_key)),
             enabled: true,

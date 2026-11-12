@@ -19,6 +19,50 @@ const CORNER_KEYS: [&str; 4] = [
     "CornerBottomRight",
 ];
 
+/// The cursor indicators whose colour can be chosen.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Indicator {
+    /// The click highlight's spot for the left button.
+    LeftClick,
+    /// The click highlight's spot for the right button.
+    RightClick,
+    /// The ring of the find-cursor halo.
+    FindRing,
+}
+
+impl Indicator {
+    pub const ALL: [Indicator; 3] = [
+        Indicator::LeftClick,
+        Indicator::RightClick,
+        Indicator::FindRing,
+    ];
+
+    /// The colour until the menu says otherwise, as 0xRRGGBB.
+    pub fn default_colour(self) -> i32 {
+        match self {
+            Indicator::LeftClick | Indicator::FindRing => 0xFFE100,
+            Indicator::RightClick => 0x2D7DFF,
+        }
+    }
+
+    /// The menu id that sets it: "<id>:<rgb>" picks a colour, "<id>-custom" opens the picker.
+    pub fn id(self) -> &'static str {
+        match self {
+            Indicator::LeftClick => "left-click-colour",
+            Indicator::RightClick => "right-click-colour",
+            Indicator::FindRing => "find-colour",
+        }
+    }
+
+    fn key(self) -> &'static str {
+        match self {
+            Indicator::LeftClick => "ClickLeftColour",
+            Indicator::RightClick => "ClickRightColour",
+            Indicator::FindRing => "FindCursorColour",
+        }
+    }
+}
+
 macro_rules! switch {
     ($load:ident, $save:ident, $key:expr, $default:expr) => {
         pub fn $load(&self) -> bool {
@@ -90,6 +134,18 @@ impl Preferences {
     }
     pub fn save_find_key(&self, key: Modifier) {
         self.0.save("FindCursorKey", key as i32)
+    }
+
+    pub fn load_indicator_colour(&self, which: Indicator) -> i32 {
+        let c = self.load(which.key(), which.default_colour());
+        if (0..=0xFFFFFF).contains(&c) {
+            c
+        } else {
+            which.default_colour()
+        }
+    }
+    pub fn save_indicator_colour(&self, which: Indicator, rgb: i32) {
+        self.0.save(which.key(), rgb & 0xFFFFFF)
     }
 
     /// True once "start at sign-in" has been set up, so the default applies only once.

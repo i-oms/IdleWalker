@@ -9,10 +9,11 @@ use super::tray::Node;
 
 /// The items that lead elsewhere, so the menu closes for them.
 pub fn closes_menu(id: &str) -> bool {
+    // Every "...-custom" opens the colour picker.
     matches!(
         id,
-        "brightness" | "posh" | "brains" | "check-update" | "about" | "exit" | "dress-custom"
-    )
+        "brightness" | "posh" | "brains" | "check-update" | "about" | "exit"
+    ) || id.ends_with("-custom")
 }
 
 /// A group's lasting name: "Appear after: 2 seconds" stays open as its value changes.

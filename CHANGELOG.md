@@ -72,6 +72,9 @@ Notable changes are recorded here. The format follows
   go, is sized by each monitor's display scaling, and shows in screen captures.
 - "Find cursor" in the menu: pressing Ctrl twice (or Shift or Alt, as chosen there) puts a dark halo with a bright ring around
   the cursor, on whichever monitor it is. A click, a key or three seconds' rest dismisses it.
+- The colours of the cursor indicators can be chosen in the menu: the left and the right
+  click's spot under "Highlight mouse clicks", and the ring under "Find cursor", each from
+  a list or any colour with "Custom...".
 - Rust port of the C# Windows original, running on Windows, macOS and Linux.
 - Settings menu and dialogs drawn by the program.
 - Automated builds and releases for all supported platforms.
