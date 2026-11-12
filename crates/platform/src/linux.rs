@@ -24,6 +24,9 @@ struct X {
     root: Window,
     visual: Option<(Visualid, Colormap)>,
     a_workarea: Atom,
+    a_desktop: Atom,
+    a_client_list: Atom,
+    a_strut: Atom,
     a_active: Atom,
     a_state: Atom,
     a_fullscreen: Atom,
@@ -68,6 +71,9 @@ fn connect() -> Option<X> {
         root: screen.root,
         visual,
         a_workarea: atom(&conn, "_NET_WORKAREA"),
+        a_desktop: atom(&conn, "_NET_CURRENT_DESKTOP"),
+        a_client_list: atom(&conn, "_NET_CLIENT_LIST"),
+        a_strut: atom(&conn, "_NET_WM_STRUT_PARTIAL"),
         a_active: atom(&conn, "_NET_ACTIVE_WINDOW"),
         a_state: atom(&conn, "_NET_WM_STATE"),
         a_fullscreen: atom(&conn, "_NET_WM_STATE_FULLSCREEN"),
@@ -136,7 +142,29 @@ pub fn legacy_setting(_name: &str) -> Option<i32> {
 
 // ---- Monitors and the cursor -----------------------------------------------------------
 
+/// How long a reading of the monitor layout is reused. Reading it is several round trips
+/// to the X server, and it is asked for every frame; a plugged-in monitor or a moved
+/// panel still shows within this.
+const SCREENS_TTL: std::time::Duration = std::time::Duration::from_millis(500);
+
 pub fn screens() -> Vec<Screen> {
+    static CACHE: std::sync::Mutex<Option<(std::time::Instant, Vec<Screen>)>> =
+        std::sync::Mutex::new(None);
+    let mut cache = CACHE.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some((at, list)) = cache.as_ref() {
+        if at.elapsed() < SCREENS_TTL {
+            return list.clone();
+        }
+    }
+    let list = read_screens();
+    // Nothing to keep while there is no X server to ask.
+    if !list.is_empty() {
+        *cache = Some((std::time::Instant::now(), list.clone()));
+    }
+    list
+}
+
+fn read_screens() -> Vec<Screen> {
     let Some(x) = x() else { return vec![] };
     let scale = x.dpi_scale;
     let monitors = x
@@ -170,31 +198,110 @@ pub fn screens() -> Vec<Screen> {
             primary: true,
         });
     }
-    // _NET_WORKAREA is one rectangle over the whole desktop: panels at the very bottom
-    // of the lowest monitor shorten the working area of the monitors they touch.
-    if let Some(area) = x
-        .conn
-        .get_property(false, x.root, x.a_workarea, AtomEnum::CARDINAL, 0, 4)
-        .ok()
-        .and_then(|r| r.reply().ok())
-        .and_then(|r| r.value32().map(|v| v.collect::<Vec<u32>>()))
-    {
-        if area.len() == 4 {
-            let bottom = (area[1] + area[3]) as i32;
-            for s in &mut out {
-                if s.bounds.bottom() > bottom && s.bounds.top() < bottom {
-                    s.work = Rectangle::from_ltrb(
-                        s.bounds.left(),
-                        s.bounds.top(),
-                        s.bounds.right(),
-                        bottom,
-                    );
-                }
-            }
-        }
-    }
+    shorten_for_panels(x, &mut out);
     out.sort_by_key(|s| !s.primary);
     out
+}
+
+/// A window property that is a list of 32-bit values; empty when it is not set.
+fn cardinals(x: &X, window: Window, property: Atom, kind: AtomEnum, max: u32) -> Vec<u32> {
+    x.conn
+        .get_property(false, window, property, kind, 0, max)
+        .ok()
+        .and_then(|r| r.reply().ok())
+        .and_then(|r| r.value32().map(|v| v.collect()))
+        .unwrap_or_default()
+}
+
+/// Ends a monitor's working area at `line`, if that is inside the monitor.
+fn end_work_at(s: &mut Screen, line: i32) {
+    if line < s.work.bottom() && line > s.bounds.top() {
+        s.work = Rectangle::from_ltrb(s.work.left(), s.work.top(), s.work.right(), line);
+    }
+}
+
+/// Shortens the working area of each monitor that has a panel along its bottom, so the
+/// cast walks on the panel and not behind it. With monitors of different heights this has
+/// to be known per monitor, so the sources are asked from the most to the least exact.
+fn shorten_for_panels(x: &X, out: &mut [Screen]) {
+    // GNOME publishes a working area for every monitor of the current workspace.
+    let desktop = cardinals(x, x.root, x.a_desktop, AtomEnum::CARDINAL, 1)
+        .first()
+        .copied()
+        .unwrap_or(0);
+    let a_areas = atom(&x.conn, &format!("_GTK_WORKAREAS_D{}", desktop));
+    let areas = if a_areas != 0 {
+        cardinals(x, x.root, a_areas, AtomEnum::CARDINAL, 256)
+    } else {
+        Vec::new()
+    };
+    if !areas.is_empty() && areas.len() % 4 == 0 {
+        for q in areas.chunks(4) {
+            let area = Rectangle::new(q[0] as i32, q[1] as i32, q[2] as i32, q[3] as i32);
+            let middle = Point::new(area.left() + area.width / 2, area.top() + area.height / 2);
+            for s in out.iter_mut().filter(|s| s.bounds.contains(middle)) {
+                end_work_at(s, area.bottom());
+            }
+        }
+        return;
+    }
+
+    // Elsewhere each panel reserves its own strip: so many pixels up from the bottom of
+    // the whole desktop, between two x positions.
+    let desktop_bottom = x
+        .conn
+        .get_geometry(x.root)
+        .ok()
+        .and_then(|r| r.reply().ok())
+        .map(|g| g.height as i32);
+    if let Some(desktop_bottom) = desktop_bottom {
+        let clients = cardinals(x, x.root, x.a_client_list, AtomEnum::WINDOW, 4096);
+        // All asked before any answer is read: one round trip, however many windows.
+        let asked: Vec<_> = clients
+            .iter()
+            .filter_map(|&w| {
+                x.conn
+                    .get_property(false, w, x.a_strut, AtomEnum::CARDINAL, 0, 12)
+                    .ok()
+            })
+            .collect();
+        let mut any = false;
+        for cookie in asked {
+            let strut: Vec<u32> = cookie
+                .reply()
+                .ok()
+                .and_then(|r| r.value32().map(|v| v.collect()))
+                .unwrap_or_default();
+            if strut.len() < 12 {
+                continue;
+            }
+            any = true;
+            if strut[3] == 0 {
+                continue;
+            }
+            let line = desktop_bottom - strut[3] as i32;
+            let (from, to) = (strut[10] as i32, strut[11] as i32);
+            for s in out
+                .iter_mut()
+                .filter(|s| from < s.bounds.right() && to >= s.bounds.left())
+            {
+                end_work_at(s, line);
+            }
+        }
+        if any {
+            return;
+        }
+    }
+
+    // Last resort: _NET_WORKAREA, one rectangle over the whole desktop. It cannot say
+    // which monitor a panel is on, so every monitor it cuts through is shortened.
+    let area = cardinals(x, x.root, x.a_workarea, AtomEnum::CARDINAL, 4);
+    if area.len() == 4 {
+        let bottom = (area[1] + area[3]) as i32;
+        for s in out.iter_mut() {
+            end_work_at(s, bottom);
+        }
+    }
 }
 
 pub fn cursor_pos() -> Option<Point> {

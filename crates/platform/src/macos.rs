@@ -1184,11 +1184,24 @@ fn device_rgb() -> *mut c_void {
 /// per-pixel transparency. Never takes focus; left out of screen sharing where macOS
 /// still honours that.
 ///
-/// The window is as big as the whole canvas and sits on whole points; the drawn part
-/// is a sublayer placed inside it. So a new frame never resizes the window (which
-/// AppKit and Core Animation apply at different moments, stretching the picture for a
-/// frame), and its position, size and pixels change together in one transaction.
+/// It is one NSWindow per display the sprite is on. With "Displays have separate
+/// Spaces" (the default) macOS draws a window on a single display only, the one holding
+/// most of it, so one window straddling two displays is cut off at the edge between
+/// them, and a sprite near that edge can sit in the part that is not drawn at all. Each
+/// window here is therefore the canvas cut down to its own display, and never leaves it.
+///
+/// A window sits on whole points and is as big as the whole canvas (while that fits its
+/// display); the drawn part is a sublayer placed inside it. So a new frame does not
+/// resize the window away from a display's edge, and position and pixels change
+/// together in one transaction.
 pub struct SpriteWindow {
+    /// By index into `NSScreen.screens`; made when the sprite first reaches that display.
+    panes: Vec<Option<Pane>>,
+    private: bool,
+}
+
+/// The part of a sprite on one display.
+struct Pane {
     window: Id,
     sprite: Id,
     visible: bool,
@@ -1196,17 +1209,8 @@ pub struct SpriteWindow {
     frame: (f64, f64, f64, f64),
 }
 
-impl SpriteWindow {
-    pub fn new() -> Self {
-        Self::create(true)
-    }
-
-    /// One that screenshots and screen sharing include.
-    pub fn capturable() -> Self {
-        Self::create(false)
-    }
-
-    fn create(private: bool) -> Self {
+impl Pane {
+    fn new(private: bool) -> Self {
         unsafe {
             let rect = NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(1.0, 1.0));
             let w: Id = msg_send![class!(NSWindow), alloc];
@@ -1231,7 +1235,7 @@ impl SpriteWindow {
             // Owned by its superlayer, which lives as long as the window.
             let sprite: Id = msg_send![class!(CALayer), layer];
             let _: () = msg_send![root, addSublayer: sprite];
-            SpriteWindow {
+            Pane {
                 window: w,
                 sprite,
                 visible: false,
@@ -1240,8 +1244,53 @@ impl SpriteWindow {
         }
     }
 
+    fn hide(&mut self) {
+        if self.visible {
+            let _: () =
+                unsafe { msg_send![self.window, orderOut: std::ptr::null_mut::<AnyObject>()] };
+            self.visible = false;
+        }
+    }
+}
+
+impl Drop for Pane {
+    fn drop(&mut self) {
+        unsafe {
+            let _: () = msg_send![self.window, close];
+            let _: () = msg_send![self.window, release];
+        }
+    }
+}
+
+/// The part two rectangles share, as (left, bottom, width, height); `None` if they only
+/// touch or are apart.
+fn overlap(a: (f64, f64, f64, f64), b: (f64, f64, f64, f64)) -> Option<(f64, f64, f64, f64)> {
+    let left = a.0.max(b.0);
+    let bottom = a.1.max(b.1);
+    let right = (a.0 + a.2).min(b.0 + b.2);
+    let top = (a.1 + a.3).min(b.1 + b.3);
+    (right > left && top > bottom).then_some((left, bottom, right - left, top - bottom))
+}
+
+impl SpriteWindow {
+    pub fn new() -> Self {
+        Self::create(true)
+    }
+
+    /// One that screenshots and screen sharing include.
+    pub fn capturable() -> Self {
+        Self::create(false)
+    }
+
+    fn create(private: bool) -> Self {
+        SpriteWindow {
+            panes: Vec::new(),
+            private,
+        }
+    }
+
     /// Shows the surface with its top-left corner at (x, y). Only the part that has
-    /// content is uploaded; it is placed where it belongs inside the canvas-sized window.
+    /// content is uploaded; it is placed where it belongs inside each display's window.
     pub fn present(&mut self, surface: Surface, x: i32, y: i32) {
         let mut b = surface.bounds();
         if b.is_empty() {
@@ -1257,28 +1306,30 @@ impl SpriteWindow {
                 bytes.extend_from_slice(&v.to_le_bytes());
             }
         }
-        let (m, _) = mac_screens();
+        let (m, screens) = mac_screens();
         let f = m.factor;
 
-        // The window on whole points (so AppKit never has to round it), one point
-        // larger than the canvas to take up the remainder, which the sprite carries.
+        // The canvas on whole points (so AppKit never has to round a window), one point
+        // larger to take up the remainder, which the sprite carries.
         let left_pt = x as f64 / f;
         let top_pt = m.primary_h - y as f64 / f; // AppKit y: up from the primary's bottom
         let win_left = left_pt.floor();
         let win_top = top_pt.ceil();
         let win_w = (surface.width() as f64 / f).ceil() + 1.0;
         let win_h = (surface.height() as f64 / f).ceil() + 1.0;
-        let frame = (win_left, win_top - win_h, win_w, win_h);
+        let canvas = (win_left, win_top - win_h, win_w, win_h);
 
-        // The sprite inside the window, in the layer's own y-up coordinates.
+        // The drawn part, in the same desktop-wide y-up points.
         let sprite_w = b.width as f64 / f;
         let sprite_h = b.height as f64 / f;
-        let sprite_left = (left_pt - win_left) + b.left() as f64 / f;
-        let sprite_top = (win_top - top_pt) + b.top() as f64 / f;
-        let sprite = NSRect::new(
-            NSPoint::new(sprite_left, win_h - sprite_top - sprite_h),
-            NSSize::new(sprite_w, sprite_h),
-        );
+        let sprite_left = left_pt + b.left() as f64 / f;
+        let sprite_bottom = top_pt - b.top() as f64 / f - sprite_h;
+        let drawn = (sprite_left, sprite_bottom, sprite_w, sprite_h);
+
+        if self.panes.len() < screens.len() {
+            self.panes.resize_with(screens.len(), || None);
+        }
+        let private = self.private;
 
         unsafe {
             let info = Box::into_raw(Box::new(bytes));
@@ -1303,33 +1354,66 @@ impl SpriteWindow {
             );
             CGDataProviderRelease(provider);
 
-            // Move the window first (only when it really moves), then commit the
-            // sprite straight after, so both land on the same refresh.
-            if frame != self.frame {
-                let rect = NSRect::new(
-                    NSPoint::new(frame.0, frame.1),
-                    NSSize::new(frame.2, frame.3),
-                );
-                if (frame.2, frame.3) == (self.frame.2, self.frame.3) {
-                    let _: () = msg_send![self.window, setFrameOrigin: rect.origin];
-                } else {
-                    let _: () = msg_send![self.window, setFrame: rect, display: false];
+            // Move the windows first (only those that really move), then commit the
+            // sprites straight after, so both land on the same refresh.
+            let mut shown: Vec<usize> = Vec::with_capacity(2);
+            for (i, slot) in self.panes.iter_mut().enumerate() {
+                let display = screens.get(i).map(|s| {
+                    let r = s.0;
+                    (r.origin.x, r.origin.y, r.size.width, r.size.height)
+                });
+                // A display gets a window only while some of the drawing is on it.
+                let frame = display
+                    .filter(|d| overlap(drawn, *d).is_some())
+                    .and_then(|d| overlap(canvas, d));
+                let Some(frame) = frame else {
+                    if let Some(pane) = slot {
+                        pane.hide();
+                    }
+                    continue;
+                };
+                let pane = slot.get_or_insert_with(|| Pane::new(private));
+                if frame != pane.frame {
+                    let rect = NSRect::new(
+                        NSPoint::new(frame.0, frame.1),
+                        NSSize::new(frame.2, frame.3),
+                    );
+                    if (frame.2, frame.3) == (pane.frame.2, pane.frame.3) {
+                        let _: () = msg_send![pane.window, setFrameOrigin: rect.origin];
+                    } else {
+                        let _: () = msg_send![pane.window, setFrame: rect, display: false];
+                    }
+                    pane.frame = frame;
                 }
-                self.frame = frame;
+                shown.push(i);
             }
 
             // Animations off: contents and frame would otherwise cross-fade and slide.
             let _: () = msg_send![class!(CATransaction), begin];
             let _: () = msg_send![class!(CATransaction), setDisableActions: true];
-            let _: () = msg_send![self.sprite, setFrame: sprite];
-            let _: () = msg_send![self.sprite, setContents: image as Id];
-            let _: () = msg_send![self.sprite, setContentsScale: f];
+            for &i in &shown {
+                let Some(pane) = self.panes[i].as_ref() else {
+                    continue;
+                };
+                // In the window's own layer coordinates: y up from its bottom-left corner.
+                let place = NSRect::new(
+                    NSPoint::new(drawn.0 - pane.frame.0, drawn.1 - pane.frame.1),
+                    NSSize::new(drawn.2, drawn.3),
+                );
+                let _: () = msg_send![pane.sprite, setFrame: place];
+                let _: () = msg_send![pane.sprite, setContents: image as Id];
+                let _: () = msg_send![pane.sprite, setContentsScale: f];
+            }
             let _: () = msg_send![class!(CATransaction), commit];
             CGImageRelease(image);
 
-            if !self.visible {
-                let _: () = msg_send![self.window, orderFrontRegardless];
-                self.visible = true;
+            for &i in &shown {
+                if let Some(pane) = self.panes[i].as_mut() {
+                    if !pane.visible {
+                        let _: () = msg_send![pane.window, orderFrontRegardless];
+                        pane.visible = true;
+                    }
+                }
             }
         }
     }
@@ -1340,19 +1424,8 @@ impl SpriteWindow {
     pub fn stay_on_top(&self) {}
 
     pub fn hide(&mut self) {
-        if self.visible {
-            let _: () =
-                unsafe { msg_send![self.window, orderOut: std::ptr::null_mut::<AnyObject>()] };
-            self.visible = false;
-        }
-    }
-}
-
-impl Drop for SpriteWindow {
-    fn drop(&mut self) {
-        unsafe {
-            let _: () = msg_send![self.window, close];
-            let _: () = msg_send![self.window, release];
+        for pane in self.panes.iter_mut().flatten() {
+            pane.hide();
         }
     }
 }
