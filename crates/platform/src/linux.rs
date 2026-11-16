@@ -11,6 +11,7 @@
 use super::{BrightnessInfo, Modifier, MouseButtons, Screen};
 use crate::prelude::*;
 use crate::rt::{Point, Rectangle};
+use idlewalker_application::debug_note;
 use std::ffi::CString;
 use std::path::PathBuf;
 use std::sync::OnceLock;
@@ -52,7 +53,17 @@ fn atom(c: &RustConnection, name: &str) -> Atom {
 }
 
 fn connect() -> Option<X> {
-    let (conn, screen_num) = RustConnection::connect(None).ok()?;
+    let (conn, screen_num) = match RustConnection::connect(None) {
+        Ok(c) => c,
+        Err(e) => {
+            debug_note!(
+                "x11: cannot connect to DISPLAY={:?}: {}",
+                std::env::var("DISPLAY").ok(),
+                e
+            );
+            return None;
+        }
+    };
     let screen = conn.setup().roots[screen_num].clone();
     // The first 32-bit true-colour visual is the compositor's ARGB one.
     let visual_id = screen
@@ -70,6 +81,16 @@ fn connect() -> Option<X> {
     });
     let a_wm_cm = atom(&conn, &format!("_NET_WM_CM_S{}", screen_num));
     let dpi_scale = xft_dpi(&conn, screen.root).unwrap_or(96.0) / 96.0;
+    debug_note!(
+        "x11: connected to screen {} ({}x{}, depth {}), 32-bit visual {:?}, Xft.dpi scale {}, wayland session {}",
+        screen_num,
+        screen.width_in_pixels,
+        screen.height_in_pixels,
+        screen.root_depth,
+        visual.map(|v| v.0),
+        dpi_scale,
+        wayland()
+    );
     Some(X {
         root: screen.root,
         visual,
@@ -129,8 +150,16 @@ pub fn single_instance() -> bool {
     if !first {
         if let Some(socket) = relaunch_socket() {
             use std::io::Write;
-            if let Ok(mut s) = std::os::unix::net::UnixStream::connect(socket) {
-                let _ = s.write_all(b"menu\n");
+            match std::os::unix::net::UnixStream::connect(&socket) {
+                Ok(mut s) => {
+                    let _ = s.write_all(b"menu\n");
+                    debug_note!("instance: already running; asked it to open its menu");
+                }
+                Err(e) => debug_note!(
+                    "instance: already running, but {} did not answer: {}",
+                    socket.display(),
+                    e
+                ),
             }
         }
     }
@@ -154,15 +183,24 @@ pub fn watch_relaunch(on_relaunch: Box<dyn Fn() + Send>) {
     };
     // Only the copy holding the instance lock gets here, so a file left there is stale.
     let _ = std::fs::remove_file(&path);
-    let Ok(listener) = std::os::unix::net::UnixListener::bind(&path) else {
-        return;
+    let listener = match std::os::unix::net::UnixListener::bind(&path) {
+        Ok(l) => l,
+        Err(e) => {
+            debug_note!("relaunch: cannot listen on {}: {}", path.display(), e);
+            return;
+        }
     };
+    debug_note!("relaunch: listening on {}", path.display());
     let _ = std::thread::Builder::new()
         .name("IdleWalker relaunch".into())
         .spawn(move || {
             for mut stream in listener.incoming().flatten() {
                 let mut asked = [0u8; 16];
                 let n = stream.read(&mut asked).unwrap_or(0);
+                debug_note!(
+                    "relaunch: started again, asked {:?}",
+                    String::from_utf8_lossy(&asked[..n])
+                );
                 if asked[..n].starts_with(b"menu") {
                     on_relaunch();
                 }
@@ -205,6 +243,13 @@ pub fn screens() -> Vec<Screen> {
         }
     }
     let list = read_screens();
+    if debug_enabled() && cache.as_ref().is_none_or(|(_, old)| *old != list) {
+        debug_note!(
+            "screens: {} (work area from {})",
+            describe_screens(&list),
+            WORK_SOURCE.lock().unwrap_or_else(|e| e.into_inner())
+        );
+    }
     // Nothing to keep while there is no X server to ask.
     if !list.is_empty() {
         *cache = Some((std::time::Instant::now(), list.clone()));
@@ -271,6 +316,38 @@ fn end_work_at(s: &mut Screen, line: i32) {
 /// Shortens the working area of each monitor that has a panel along its bottom, so the
 /// cast walks on the panel and not behind it. With monitors of different heights this has
 /// to be known per monitor, so the sources are asked from the most to the least exact.
+fn debug_enabled() -> bool {
+    idlewalker_application::debug::enabled()
+}
+
+/// Which source the working areas last came from, for the trace and `--diagnose`.
+static WORK_SOURCE: std::sync::Mutex<&'static str> = std::sync::Mutex::new("nothing yet");
+
+fn work_source(source: &'static str) {
+    *WORK_SOURCE.lock().unwrap_or_else(|e| e.into_inner()) = source;
+}
+
+fn describe_screens(list: &[Screen]) -> String {
+    list.iter()
+        .map(|s| {
+            format!(
+                "[{},{} {}x{} work {},{} {}x{} scale {}{}]",
+                s.bounds.x,
+                s.bounds.y,
+                s.bounds.width,
+                s.bounds.height,
+                s.work.x,
+                s.work.y,
+                s.work.width,
+                s.work.height,
+                s.dpi_scale,
+                if s.primary { " primary" } else { "" }
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 fn shorten_for_panels(x: &X, out: &mut [Screen]) {
     // GNOME publishes a working area for every monitor of the current workspace.
     let desktop = cardinals(x, x.root, x.a_desktop, AtomEnum::CARDINAL, 1)
@@ -291,6 +368,7 @@ fn shorten_for_panels(x: &X, out: &mut [Screen]) {
                 end_work_at(s, area.bottom());
             }
         }
+        work_source("_GTK_WORKAREAS (GNOME)");
         return;
     }
 
@@ -337,6 +415,7 @@ fn shorten_for_panels(x: &X, out: &mut [Screen]) {
             }
         }
         if any {
+            work_source("panel struts");
             return;
         }
     }
@@ -349,6 +428,9 @@ fn shorten_for_panels(x: &X, out: &mut [Screen]) {
         for s in out.iter_mut() {
             end_work_at(s, bottom);
         }
+        work_source("_NET_WORKAREA");
+    } else {
+        work_source("nothing: whole monitors");
     }
 }
 
@@ -441,18 +523,35 @@ impl InputWatch {
         let _ = std::thread::Builder::new()
             .name("IdleWalker input watch".into())
             .spawn(move || {
-                let Ok(bus) = zbus::blocking::Connection::session() else {
-                    return;
+                let bus = match zbus::blocking::Connection::session() {
+                    Ok(b) => b,
+                    Err(e) => {
+                        debug_note!("idle clock: no D-Bus session bus: {}", e);
+                        return;
+                    }
                 };
                 let Some(clock) = IDLE_CLOCKS.iter().find(|c| c.read(&bus).is_some()) else {
+                    debug_note!(
+                        "idle clock: neither {} nor {} answers; idleness follows the XWayland cursor only",
+                        IDLE_CLOCKS[0].service,
+                        IDLE_CLOCKS[1].service
+                    );
                     return;
                 };
+                debug_note!("idle clock: using {}.{}", clock.interface, clock.method);
                 let mut previous: Option<u64> = None;
+                let mut next_report = std::time::Instant::now();
                 loop {
                     let Some(value) = clock.read(&bus) else {
+                        debug_note!("idle clock: {} stopped answering", clock.service);
                         std::thread::sleep(std::time::Duration::from_secs(2));
                         continue;
                     };
+                    if debug_enabled() && std::time::Instant::now() >= next_report {
+                        next_report =
+                            std::time::Instant::now() + std::time::Duration::from_secs(2);
+                        debug_note!("idle clock: {} reads {}", clock.method, value);
+                    }
                     let now = std::time::Instant::now();
                     let at = if clock.exact_ms {
                         now.checked_sub(std::time::Duration::from_millis(value))
@@ -481,7 +580,49 @@ impl InputWatch {
 pub fn cursor_pos() -> Option<Point> {
     let x = x()?;
     let r = x.conn.query_pointer(x.root).ok()?.reply().ok()?;
+    if debug_enabled() {
+        static NEXT: std::sync::Mutex<Option<std::time::Instant>> = std::sync::Mutex::new(None);
+        let mut next = NEXT.lock().unwrap_or_else(|e| e.into_inner());
+        let now = std::time::Instant::now();
+        if next.is_none_or(|t| now >= t) {
+            *next = Some(now + std::time::Duration::from_secs(1));
+            debug_note!(
+                "cursor: {},{} mask {:#06x} over child {:#x} tracked {} input idle {:?}",
+                r.root_x,
+                r.root_y,
+                u16::from(r.mask),
+                r.child,
+                pointer_tracked(),
+                input_idle_seconds().map(|s| (s * 10.0).round() / 10.0)
+            );
+        }
+    }
+    drain_x_events(x);
     Some(Point::new(r.root_x as i32, r.root_y as i32))
+}
+
+/// Reads what the server sent unasked. Nothing listens for events on this connection, but
+/// the errors of requests sent without waiting arrive this way and would pile up; with
+/// `--debug` the first 200 are written down.
+fn drain_x_events(x: &X) {
+    static SHOWN: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+    while let Ok(Some(event)) = x.conn.poll_for_event() {
+        if let x11rb::protocol::Event::Error(e) = event {
+            let n = SHOWN.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            if n < 200 {
+                debug_note!(
+                    "x11 error: {:?} on request {}.{} resource {:#x} (seq {})",
+                    e.error_kind,
+                    e.major_opcode,
+                    e.minor_opcode,
+                    e.bad_value,
+                    e.sequence
+                );
+            } else if n == 200 {
+                debug_note!("x11 error: more than 200, no longer written down");
+            }
+        }
+    }
 }
 
 /// The pointer's button and modifier bits; 0 when the server will not say.
@@ -899,6 +1040,389 @@ pub fn brightness_write(key: &str, percent: i32) {
     }
 }
 
+// ---- Diagnostics -----------------------------------------------------------------------------------
+
+/// `--diagnose`: everything the Linux backend depends on, read once and written out as text:
+/// the session, the X server, the compositor, the monitors, the cursor, the trays, the
+/// idle clocks, the helper programs and the files.
+pub fn diagnose_report() -> String {
+    use std::fmt::Write;
+    let mut o = String::new();
+    macro_rules! say {
+        ($($arg:tt)*) => {{ let _ = writeln!(o, $($arg)*); }};
+    }
+
+    say!("\n== Session");
+    if let Ok(release) = std::fs::read_to_string("/etc/os-release") {
+        let name = release
+            .lines()
+            .find_map(|l| l.strip_prefix("PRETTY_NAME="))
+            .unwrap_or("?")
+            .trim_matches('"')
+            .to_string();
+        say!("distribution: {}", name);
+    }
+    for key in [
+        "XDG_SESSION_TYPE",
+        "XDG_CURRENT_DESKTOP",
+        "XDG_SESSION_DESKTOP",
+        "DESKTOP_SESSION",
+        "WAYLAND_DISPLAY",
+        "DISPLAY",
+        "GDK_BACKEND",
+        "XDG_RUNTIME_DIR",
+    ] {
+        say!(
+            "{}: {}",
+            key,
+            std::env::var(key).unwrap_or_else(|_| "(unset)".into())
+        );
+    }
+    say!(
+        "wayland session: {}; cursor tracked: {}",
+        wayland(),
+        pointer_tracked()
+    );
+
+    say!("\n== X server");
+    match x() {
+        None => say!("cannot connect: no walkers, cursor or trays can work"),
+        Some(x) => diagnose_x(x, &mut o),
+    }
+
+    say!("\n== D-Bus");
+    diagnose_dbus(&mut o);
+
+    say!("\n== Helper programs");
+    for program in [
+        "systemd-inhibit",
+        "loginctl",
+        "xdg-open",
+        "xdg-screensaver",
+        "xset",
+        "ddcutil",
+        "brightnessctl",
+        "gnome-extensions",
+    ] {
+        say!(
+            "{}: {}",
+            program,
+            find_in_path(program).map_or("not found".into(), |p| p.display().to_string())
+        );
+    }
+    if find_in_path("gnome-extensions").is_some() {
+        let enabled = super::output_of("gnome-extensions", &["list", "--enabled"]);
+        let enabled = enabled.unwrap_or_default();
+        let tray = enabled
+            .lines()
+            .filter(|l| l.contains("appindicator") || l.contains("tray"))
+            .collect::<Vec<_>>();
+        say!(
+            "GNOME tray extensions enabled: {}",
+            if tray.is_empty() {
+                "none".into()
+            } else {
+                tray.join(", ")
+            }
+        );
+    }
+
+    say!("\n== Files and power");
+    say!("config folder: {:?}", config_dir());
+    let socket = relaunch_socket();
+    say!(
+        "relaunch socket: {:?} (exists: {})",
+        socket,
+        socket.as_ref().is_some_and(|p| p.exists())
+    );
+    let autostart = autostart_path();
+    say!("autostart entry: {:?}", autostart);
+    if let Some(text) = autostart.and_then(|p| std::fs::read_to_string(p).ok()) {
+        for l in text.lines() {
+            say!("    {}", l);
+        }
+    }
+    say!("backlight: {:?}", backlight());
+    say!("on battery: {}", on_battery());
+    o
+}
+
+fn find_in_path(program: &str) -> Option<PathBuf> {
+    std::env::split_paths(&std::env::var_os("PATH")?)
+        .map(|d| d.join(program))
+        .find(|p| p.is_file())
+}
+
+/// The name a window gives itself: `_NET_WM_NAME`, else `WM_NAME`.
+fn window_name(x: &X, w: Window) -> String {
+    let utf8 = atom(&x.conn, "UTF8_STRING");
+    let net_name = atom(&x.conn, "_NET_WM_NAME");
+    for (prop, kind) in [
+        (net_name, utf8),
+        (AtomEnum::WM_NAME.into(), AtomEnum::STRING.into()),
+    ] {
+        if let Some(r) = x
+            .conn
+            .get_property(false, w, prop, kind, 0, 256)
+            .ok()
+            .and_then(|r| r.reply().ok())
+        {
+            if !r.value.is_empty() {
+                return String::from_utf8_lossy(&r.value).into_owned();
+            }
+        }
+    }
+    "(no name)".into()
+}
+
+fn selection_owner(x: &X, name: &str) -> Window {
+    let a = atom(&x.conn, name);
+    if a == 0 {
+        return 0;
+    }
+    x.conn
+        .get_selection_owner(a)
+        .ok()
+        .and_then(|r| r.reply().ok())
+        .map_or(0, |r| r.owner)
+}
+
+fn diagnose_x(x: &X, o: &mut String) {
+    use std::fmt::Write;
+    macro_rules! say {
+        ($($arg:tt)*) => {{ let _ = writeln!(o, $($arg)*); }};
+    }
+    let setup = x.conn.setup();
+    say!(
+        "vendor: {} (release {}), protocol {}.{}, {} screen(s), image byte order {:?}",
+        String::from_utf8_lossy(&setup.vendor),
+        setup.release_number,
+        setup.protocol_major_version,
+        setup.protocol_minor_version,
+        setup.roots.len(),
+        setup.image_byte_order
+    );
+    for name in [
+        "Composite",
+        "SHAPE",
+        "RANDR",
+        "XTEST",
+        "MIT-SCREEN-SAVER",
+        "BIG-REQUESTS",
+        "XFIXES",
+        "XInputExtension",
+    ] {
+        let present = x
+            .conn
+            .query_extension(name.as_bytes())
+            .ok()
+            .and_then(|r| r.reply().ok())
+            .is_some_and(|r| r.present);
+        say!("extension {}: {}", name, present);
+    }
+    say!("largest request: {} bytes", x.conn.maximum_request_bytes());
+    say!("32-bit visual for sprites: {:?}", x.visual.map(|v| v.0));
+    say!("Xft.dpi scale: {}", x.dpi_scale);
+
+    // The window manager names itself on a child of the root.
+    let check = atom(&x.conn, "_NET_SUPPORTING_WM_CHECK");
+    let wm = cardinals(x, x.root, check, AtomEnum::WINDOW, 1)
+        .first()
+        .copied();
+    say!(
+        "window manager: {}",
+        wm.map_or("(none says so)".into(), |w| window_name(x, w))
+    );
+    let cm = if x.a_wm_cm != 0 {
+        x.conn
+            .get_selection_owner(x.a_wm_cm)
+            .ok()
+            .and_then(|r| r.reply().ok())
+            .map_or(0, |r| r.owner)
+    } else {
+        0
+    };
+    say!(
+        "compositing manager: {}",
+        if cm == 0 {
+            "NONE: sprites cannot be shown".into()
+        } else {
+            format!("window {:#x} ({})", cm, window_name(x, cm))
+        }
+    );
+
+    say!("\n== Monitors");
+    if let Some(r) = x
+        .conn
+        .randr_get_monitors(x.root, true)
+        .ok()
+        .and_then(|r| r.reply().ok())
+    {
+        for m in &r.monitors {
+            let name = x
+                .conn
+                .get_atom_name(m.name)
+                .ok()
+                .and_then(|r| r.reply().ok())
+                .map_or("?".into(), |r| {
+                    String::from_utf8_lossy(&r.name).into_owned()
+                });
+            say!(
+                "randr monitor {}: {}x{} at {},{}{}",
+                name,
+                m.width,
+                m.height,
+                m.x,
+                m.y,
+                if m.primary { " primary" } else { "" }
+            );
+        }
+    } else {
+        say!("randr monitors: cannot ask");
+    }
+    let list = read_screens();
+    say!("as the program sees them: {}", describe_screens(&list));
+    say!(
+        "work area from: {}",
+        WORK_SOURCE.lock().unwrap_or_else(|e| e.into_inner())
+    );
+    let workarea = cardinals(x, x.root, x.a_workarea, AtomEnum::CARDINAL, 4);
+    say!("_NET_WORKAREA: {:?}", workarea);
+    say!("full-screen app in front: {}", is_fullscreen());
+    say!("window in front: {}", foreground_description());
+
+    say!("\n== Cursor (move the mouse now: 10 readings over 2 s)");
+    for _ in 0..10 {
+        if let Some(r) = x
+            .conn
+            .query_pointer(x.root)
+            .ok()
+            .and_then(|r| r.reply().ok())
+        {
+            say!(
+                "{},{} buttons/modifiers {:#06x} over child {:#x} same screen {}",
+                r.root_x,
+                r.root_y,
+                u16::from(r.mask),
+                r.child,
+                r.same_screen
+            );
+        }
+        std::thread::sleep(std::time::Duration::from_millis(200));
+    }
+    let middle = list.first().map(|s| {
+        (
+            s.bounds.x + s.bounds.width / 2,
+            s.bounds.y + s.bounds.height / 2,
+        )
+    });
+    say!(
+        "middle of the first monitor: {:?} (a cursor stuck there means XWayland cannot see it)",
+        middle
+    );
+
+    say!("\n== XEmbed system tray");
+    let screen = setup
+        .roots
+        .iter()
+        .position(|r| r.root == x.root)
+        .unwrap_or(0);
+    let tray = selection_owner(x, &format!("_NET_SYSTEM_TRAY_S{}", screen));
+    if tray == 0 {
+        say!("no XEmbed tray (_NET_SYSTEM_TRAY_S{} has no owner)", screen);
+    } else {
+        let visual = cardinals(
+            x,
+            tray,
+            atom(&x.conn, "_NET_SYSTEM_TRAY_VISUAL"),
+            AtomEnum::VISUALID,
+            1,
+        );
+        say!(
+            "owner: window {:#x} ({}), icon visual {:?}",
+            tray,
+            window_name(x, tray),
+            visual.first()
+        );
+    }
+}
+
+fn diagnose_dbus(o: &mut String) {
+    use std::fmt::Write;
+    macro_rules! say {
+        ($($arg:tt)*) => {{ let _ = writeln!(o, $($arg)*); }};
+    }
+    let bus = match zbus::blocking::Connection::session() {
+        Ok(b) => b,
+        Err(e) => {
+            say!(
+                "no session bus: {} (no StatusNotifierItem tray, no idle clock)",
+                e
+            );
+            return;
+        }
+    };
+    let has_owner = |name: &str| -> String {
+        bus.call_method(
+            Some("org.freedesktop.DBus"),
+            "/org/freedesktop/DBus",
+            Some("org.freedesktop.DBus"),
+            "NameHasOwner",
+            &(name,),
+        )
+        .ok()
+        .and_then(|r| r.body().deserialize::<bool>().ok())
+        .map_or("cannot ask".into(), |b| b.to_string())
+    };
+    for name in [
+        "org.kde.StatusNotifierWatcher",
+        "org.freedesktop.StatusNotifierWatcher",
+        "org.gnome.Mutter.IdleMonitor",
+        "org.freedesktop.ScreenSaver",
+        "org.gnome.Shell",
+        "org.kde.KWin",
+    ] {
+        say!("{}: {}", name, has_owner(name));
+    }
+    for property in [
+        "IsStatusNotifierHostRegistered",
+        "ProtocolVersion",
+        "RegisteredStatusNotifierItems",
+    ] {
+        let value = bus
+            .call_method(
+                Some("org.kde.StatusNotifierWatcher"),
+                "/StatusNotifierWatcher",
+                Some("org.freedesktop.DBus.Properties"),
+                "Get",
+                &("org.kde.StatusNotifierWatcher", property),
+            )
+            .map_err(|e| e.to_string())
+            .and_then(|r| {
+                r.body()
+                    .deserialize::<zbus::zvariant::OwnedValue>()
+                    .map(|v| format!("{:?}", v))
+                    .map_err(|e| e.to_string())
+            });
+        say!(
+            "StatusNotifierWatcher {}: {}",
+            property,
+            match value {
+                Ok(v) => v,
+                Err(e) => format!("({})", e),
+            }
+        );
+    }
+    for clock in &IDLE_CLOCKS {
+        say!(
+            "idle clock {}.{}: {:?}",
+            clock.interface,
+            clock.method,
+            clock.read(&bus)
+        );
+    }
+}
+
 // ---- The sprite window ---------------------------------------------------------------------------------
 
 fn compositing(x: &X) -> bool {
@@ -913,6 +1437,18 @@ fn compositing(x: &X) -> bool {
 /// How long a sprite window that could not be made waits before trying again: at the start
 /// of a session the program can be up before the compositor is.
 const SPRITE_RETRY: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// Writes why sprite windows cannot be made, once for each new reason; "" once it works.
+fn sprite_trouble(why: &'static str) {
+    static LAST: std::sync::Mutex<&'static str> = std::sync::Mutex::new("");
+    let mut last = LAST.lock().unwrap_or_else(|e| e.into_inner());
+    if *last != why {
+        *last = why;
+        if !why.is_empty() {
+            debug_note!("sprite: cannot make a window: {}; retrying every 2 s", why);
+        }
+    }
+}
 
 /// A rectangle as [left, right) x [top, bottom); empty when it has no area.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -1029,15 +1565,23 @@ impl SpriteWindow {
             return false;
         }
         self.next_try = Some(now + SPRITE_RETRY);
-        let Some(x) = x() else { return false };
+        let Some(x) = x() else {
+            sprite_trouble("no X server");
+            return false;
+        };
         // Without a 32-bit visual and a compositor the transparent parts would be black.
         let Some((visual, cm)) = x.visual else {
+            sprite_trouble("the X server has no 32-bit visual");
             return false;
         };
         if !compositing(x) {
+            sprite_trouble(
+                "no compositing manager owns _NET_WM_CM_Sn: start or turn on the compositor",
+            );
             return false;
         }
         let Ok(win) = x.conn.generate_id() else {
+            sprite_trouble("out of X resource ids");
             return false;
         };
         let aux = CreateWindowAux::new()
@@ -1061,6 +1605,7 @@ impl SpriteWindow {
             )
             .is_err()
         {
+            sprite_trouble("CreateWindow failed");
             return false;
         }
         // An empty input shape: every click falls through to what is underneath.
@@ -1111,6 +1656,8 @@ impl SpriteWindow {
         }
         let _ = x.conn.flush();
         self.win = Some(win);
+        sprite_trouble("");
+        debug_note!("sprite: window {:#x} made", win);
         true
     }
 
@@ -1159,6 +1706,14 @@ impl SpriteWindow {
                     width: size.0,
                     height: size.1,
                 }],
+            );
+            debug_note!(
+                "sprite: window {:#x} is now {}x{}, first at {},{}",
+                win,
+                size.0,
+                size.1,
+                px,
+                py
             );
             self.pixmap = Some(pixmap);
             self.drawn = Span::default();

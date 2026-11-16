@@ -84,6 +84,9 @@ Notable changes are recorded here. The format follows
 
 ### Added
 
+- `--diagnose` prints what the machine offers the program (session, X server, compositor,
+  monitors, cursor, trays, idle clocks, helper programs), and `--debug` writes a trace of a
+  run to stderr and `IdleWalker-debug.log` in the temp folder, to report Linux problems with.
 - "Highlight mouse clicks" in the menu: a spot under the cursor at every click, yellow for
   the left button and blue for the right. It follows a drag, fades where the button was let
   go, is sized by each monitor's display scaling, and shows in screen captures.

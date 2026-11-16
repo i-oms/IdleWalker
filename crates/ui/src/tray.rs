@@ -443,6 +443,7 @@ mod backend {
 #[cfg(target_os = "linux")]
 mod backend {
     use super::*;
+    use idlewalker_application::debug_note;
     use ksni::blocking::{Handle, TrayMethods};
     use ksni::menu::StandardItem;
     use ksni::MenuItem;
@@ -505,12 +506,24 @@ mod backend {
         fn icon_pixmap(&self) -> Vec<ksni::Icon> {
             self.icons.clone()
         }
-        fn activate(&mut self, _x: i32, _y: i32) {
+        fn activate(&mut self, x: i32, y: i32) {
+            debug_note!("tray (SNI): activate at {},{}", x, y);
             let _ = self.proxy.send_event(UserEvent::TrayLeftClick);
         }
         /// A middle click.
-        fn secondary_activate(&mut self, _x: i32, _y: i32) {
+        fn secondary_activate(&mut self, x: i32, y: i32) {
+            debug_note!("tray (SNI): secondary activate at {},{}", x, y);
             let _ = self.proxy.send_event(UserEvent::Menu("menu".into()));
+        }
+        fn menu_about_to_show(&mut self) {
+            debug_note!("tray (SNI): the desktop is showing its menu");
+        }
+        fn watcher_online(&self) {
+            debug_note!("tray (SNI): StatusNotifierWatcher came online");
+        }
+        fn watcher_offline(&self, reason: ksni::OfflineReason) -> bool {
+            debug_note!("tray (SNI): StatusNotifierWatcher offline: {:?}", reason);
+            true
         }
         fn menu(&self) -> Vec<MenuItem<Self>> {
             vec![
@@ -531,14 +544,19 @@ mod backend {
     impl Tray {
         pub fn new(proxy: EventLoopProxy<UserEvent>) -> Option<Tray> {
             // A StatusNotifierItem, where something is there to show it.
-            if let Ok(h) = Sni::new(proxy.clone()).spawn() {
-                return Some(Tray {
-                    _sni: Some(h),
-                    shown: true,
-                });
+            match Sni::new(proxy.clone()).spawn() {
+                Ok(h) => {
+                    debug_note!("tray: StatusNotifierItem registered");
+                    return Some(Tray {
+                        _sni: Some(h),
+                        shown: true,
+                    });
+                }
+                Err(e) => debug_note!("tray: no StatusNotifierItem host: {}", e),
             }
             // The XEmbed system tray.
             if xembed::start(proxy.clone()) {
+                debug_note!("tray: docking in the XEmbed system tray");
                 return Some(Tray {
                     _sni: None,
                     shown: true,
@@ -546,7 +564,16 @@ mod backend {
             }
             // Neither yet. Started with the session, the program can be up before the
             // panel is: the item shows as soon as a StatusNotifierItem host comes.
-            let h = Sni::new(proxy).assume_sni_available(true).spawn().ok();
+            let h = match Sni::new(proxy).assume_sni_available(true).spawn() {
+                Ok(h) => {
+                    debug_note!("tray: no tray yet; waiting for a StatusNotifierItem host");
+                    Some(h)
+                }
+                Err(e) => {
+                    debug_note!("tray: none at all, and cannot wait for one: {}", e);
+                    None
+                }
+            };
             Some(Tray {
                 _sni: h,
                 shown: false,
@@ -564,6 +591,7 @@ mod backend {
     mod xembed {
         use super::super::logo_rgba;
         use crate::UserEvent;
+        use idlewalker_application::debug_note;
         use winit::event_loop::EventLoopProxy;
         use x11rb::connection::Connection;
         use x11rb::protocol::xproto::*;
@@ -606,8 +634,12 @@ mod backend {
         /// Docks the icon in the tray and serves it from a thread of its own; false when
         /// no XEmbed tray is running.
         pub fn start(proxy: EventLoopProxy<UserEvent>) -> bool {
-            let Ok((conn, screen)) = RustConnection::connect(None) else {
-                return false;
+            let (conn, screen) = match RustConnection::connect(None) {
+                Ok(c) => c,
+                Err(e) => {
+                    debug_note!("tray (XEmbed): no X server: {}", e);
+                    return false;
+                }
             };
             let atoms = Atoms {
                 selection: atom(&conn, &format!("_NET_SYSTEM_TRAY_S{}", screen)),
@@ -617,6 +649,7 @@ mod backend {
                 xembed_info: atom(&conn, "_XEMBED_INFO"),
             };
             let Some(owner) = tray_owner(&conn, &atoms) else {
+                debug_note!("tray (XEmbed): _NET_SYSTEM_TRAY_S{} has no owner", screen);
                 return false;
             };
             let mut icon = Icon {
@@ -739,9 +772,17 @@ mod backend {
                         )
                     }
                 };
-                if made.is_err() {
+                if let Err(e) = made {
+                    debug_note!("tray (XEmbed): cannot make the icon window: {}", e);
                     return false;
                 }
+                debug_note!(
+                    "tray (XEmbed): icon window {:#x} asks tray {:#x} to dock it (argb {}, depth {})",
+                    window,
+                    owner,
+                    self.argb,
+                    self.depth
+                );
                 self.window = window;
                 if self.gc != NONE {
                     let _ = c.free_gc(self.gc);
@@ -793,6 +834,34 @@ mod backend {
                 );
                 let _ = self.conn.flush();
                 while let Ok(event) = self.conn.wait_for_event() {
+                    match &event {
+                        Event::Error(e) => debug_note!(
+                            "tray (XEmbed): x11 error {:?} on request {}.{}",
+                            e.error_kind,
+                            e.major_opcode,
+                            e.minor_opcode
+                        ),
+                        Event::ReparentNotify(e) if e.window == self.window => {
+                            debug_note!("tray (XEmbed): icon reparented to {:#x}", e.parent)
+                        }
+                        Event::MapNotify(e) if e.window == self.window => {
+                            debug_note!("tray (XEmbed): icon mapped")
+                        }
+                        Event::ConfigureNotify(e) if e.window == self.window => debug_note!(
+                            "tray (XEmbed): icon is {}x{} at {},{}",
+                            e.width,
+                            e.height,
+                            e.x,
+                            e.y
+                        ),
+                        Event::ButtonRelease(e) if e.event == self.window => {
+                            debug_note!("tray (XEmbed): button {} released", e.detail)
+                        }
+                        Event::ClientMessage(e) if e.type_ == self.atoms.manager => {
+                            debug_note!("tray (XEmbed): a tray took over: {:?}", e.data.as_data32())
+                        }
+                        _ => {}
+                    }
                     match event {
                         Event::Expose(e) if e.window == self.window && e.count == 0 => self.draw(),
                         Event::ConfigureNotify(e) if e.window == self.window => {
@@ -843,6 +912,11 @@ mod backend {
                     .iter()
                     .any(|f| f.depth == self.depth && f.bits_per_pixel == 32);
                 if !four_bytes || c.setup().image_byte_order != ImageOrder::LSB_FIRST {
+                    debug_note!(
+                        "tray (XEmbed): cannot draw: depth {} has no 32-bit pixels, or byte order {:?}",
+                        self.depth,
+                        c.setup().image_byte_order
+                    );
                     return;
                 }
                 let side = w.min(h).max(1);
@@ -870,7 +944,10 @@ mod backend {
                             let n = out.len();
                             out.copy_from_slice(&r.data[..n])
                         }
-                        None => out.fill(0x30),
+                        None => {
+                            debug_note!("tray (XEmbed): cannot read the panel behind the icon");
+                            out.fill(0x30)
+                        }
                     }
                 }
                 for y in 0..side {

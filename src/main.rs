@@ -13,6 +13,24 @@ fn main() {
         println!("idlewalker {}", env!("CARGO_PKG_VERSION"));
         return;
     }
+    // --diagnose: a report of what this machine offers the program, then nothing else.
+    if std::env::args().any(|a| a == "--diagnose") {
+        print!("{}", platform::diagnose());
+        return;
+    }
+    // --debug (or IDLEWALKER_DEBUG=1): a trace of what happens, to stderr and a log file.
+    let debug = std::env::args().any(|a| a == "--debug")
+        || std::env::var("IDLEWALKER_DEBUG").is_ok_and(|v| v != "0" && !v.is_empty());
+    if debug {
+        platform::start_debug_trace();
+        idlewalker_application::debug_note!(
+            "arguments: {:?}",
+            std::env::args().skip(1).collect::<Vec<_>>()
+        );
+        for line in platform::diagnose().lines() {
+            idlewalker_application::debug_note!("diagnose: {}", line);
+        }
+    }
     // IDLEWALKER_TEST: keep the panic hook, leave the sign-in entry alone, no update checks.
     let test = std::env::var_os("IDLEWALKER_TEST").is_some();
 
@@ -20,6 +38,16 @@ fn main() {
     // nothing; with IDLEWALKER_TEST the default hook stays, to show what went wrong.
     if !cfg!(debug_assertions) && !test {
         std::panic::set_hook(Box::new(|_| {}));
+    }
+    // Under --debug a panic is written down, wherever it happens.
+    if debug {
+        std::panic::set_hook(Box::new(|info| {
+            idlewalker_application::debug_note!(
+                "PANIC: {}\n{}",
+                info,
+                std::backtrace::Backtrace::force_capture()
+            );
+        }));
     }
     if !platform::single_instance() {
         return;

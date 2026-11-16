@@ -62,6 +62,24 @@ Differences on every OS, compared with the C# version:
 - **The colour picker is three sliders**, in place of the Windows colour dialog.
 - **A start-up setting failure is logged**, not shown as a balloon tip.
 
+## Diagnosing a machine
+
+Two switches help when something misbehaves on a machine you cannot sit at:
+
+- `idlewalker --diagnose` prints a report and exits: the session type and desktop, the X
+  server and its extensions, the compositing and window managers, the monitors and where
+  their working areas came from, ten cursor readings over two seconds (move the mouse while it
+  runs), the XEmbed and StatusNotifierItem trays, the compositor's idle clocks, the helper
+  programs and the autostart entry. The detailed checks are written for Linux.
+- `idlewalker --debug` (or `IDLEWALKER_DEBUG=1`) runs as usual and writes a trace to stderr
+  and to `IdleWalker-debug.log` in the temp folder (`/tmp` on Linux), started afresh each run.
+  It begins with the `--diagnose` report, then notes which tray was used and every tray click,
+  each menu and dialog with where it opened, monitor layout changes, the cursor once a second,
+  the idle clock every two seconds, sprite windows that cannot be made and why, X11 errors,
+  click-highlight presses, find-cursor halos and any panic with its backtrace.
+
+Quit any running copy first: a second copy only asks the first to open its menu.
+
 ## How it is built
 
 The code follows Clean Architecture: one Cargo crate per layer, and each crate may depend only

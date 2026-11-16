@@ -211,6 +211,12 @@ impl ClickHighlight {
         };
         self.held = buttons;
         if let Some(left) = pressed {
+            idlewalker_application::debug_note!(
+                "click highlight: {} press at {},{}",
+                if left { "left" } else { "right" },
+                cursor.x,
+                cursor.y
+            );
             self.spot = Some(Spot {
                 left,
                 at: cursor,
@@ -430,6 +436,11 @@ impl FindCursor {
                 }
             }
             _ if fired => {
+                idlewalker_application::debug_note!(
+                    "find cursor: key pressed twice, halo at {},{}",
+                    cursor.x,
+                    cursor.y
+                );
                 self.beam = Some(Beam {
                     since: Instant::now(),
                     at: cursor,

@@ -16,9 +16,29 @@
 mod adapters;
 mod files;
 pub use adapters::{
-    capturable_sprite_factory, sprite_factory, CurlReleaseFeed, NativeDesktop, NativeWorkstation,
-    SystemClock, TempFileJournal,
+    capturable_sprite_factory, debug_log_path, sprite_factory, start_debug_trace, CurlReleaseFeed,
+    NativeDesktop, NativeWorkstation, SystemClock, TempFileJournal,
 };
+
+/// `--diagnose`: what this machine offers the program, as a report to paste into an issue.
+pub fn diagnose() -> String {
+    let mut out = format!(
+        "IdleWalker {} diagnostics
+os: {} {}
+",
+        env!("CARGO_PKG_VERSION"),
+        std::env::consts::OS,
+        std::env::consts::ARCH
+    );
+    #[cfg(target_os = "linux")]
+    out.push_str(&backend::diagnose_report());
+    #[cfg(not(target_os = "linux"))]
+    out.push_str(
+        "(the detailed checks are written for Linux)
+",
+    );
+    out
+}
 pub use files::{FileBrainStore, FilePreferences};
 pub use idlewalker_application::{BrightnessInfo, Modifier, MouseButtons, Screen};
 

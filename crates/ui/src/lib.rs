@@ -27,6 +27,7 @@ use dialogs::{
     UpdateDialog,
 };
 use gfx::Font;
+use idlewalker_application::debug_note;
 use idlewalker_application::{
     Brains, BrightnessInfo, Desktop, Indicator, Journal, Posh, Screen, Session, UpdateState,
     Updates,
@@ -499,7 +500,17 @@ impl App {
         kind: Kind,
     ) {
         if let Some(d) = Dialog::open(el, title, place, size, kind, self.services.clone()) {
+            debug_note!(
+                "dialog: {:?} opened, asked {}x{}, got {:?} at {:?}",
+                title,
+                size.0,
+                size.1,
+                d.window.inner_size(),
+                d.window.outer_position()
+            );
             self.dialogs.insert(d.window.id(), d);
+        } else {
+            debug_note!("dialog: {:?} could not be opened", title);
         }
     }
 
@@ -710,6 +721,14 @@ impl App {
         let (screen, cursor_x) = self.screen_under_cursor();
         let s = screen.dpi_scale;
         let place = TrayPlace::new(&screen, cursor_x, 300.0);
+        debug_note!(
+            "menu: opening by cursor x {} on screen {:?} (work {:?}, scale {}): {:?}",
+            cursor_x,
+            screen.bounds,
+            screen.work,
+            s,
+            place
+        );
         let nodes = tray::build(self.session.choices(), self.desktop());
         let panel = menu_panel::MenuPanel::new(nodes);
         let size = (
@@ -732,6 +751,7 @@ impl App {
             (!d.world_rect()?.contains(c)).then_some(*id)
         });
         if let Some(id) = outside {
+            debug_note!("menu: closed by a press outside at {},{}", c.x, c.y);
             self.close_dialog(id);
         }
     }
@@ -756,6 +776,12 @@ impl ApplicationHandler<UserEvent> for App {
         self.started = true;
         self.tray = Tray::new(self.proxy.clone());
         let shown = self.tray.as_ref().is_some_and(|t| t.shown());
+        debug_note!(
+            "startup: tray shown {}, started at login {}, cursor tracked {}",
+            shown,
+            self.started_at_login,
+            self.desktop().pointer_tracked()
+        );
         if !shown {
             self.session.journal().note(
                 "no tray icon: the desktop offers no notification area; start the program again to open its menu",
@@ -793,8 +819,12 @@ impl ApplicationHandler<UserEvent> for App {
                 self.pump.pending.store(false, Ordering::Release);
                 self.on_tick(el);
             }
-            UserEvent::Menu(id) => self.on_menu(&id, el),
+            UserEvent::Menu(id) => {
+                debug_note!("menu: {}", id);
+                self.on_menu(&id, el)
+            }
             UserEvent::ShowMenu => {
+                debug_note!("menu: show (relaunch or no tray)");
                 let open = self
                     .dialogs
                     .values()
@@ -804,7 +834,10 @@ impl ApplicationHandler<UserEvent> for App {
                     None => self.toggle_menu(el),
                 }
             }
-            UserEvent::TrayLeftClick => self.toggle_brightness(el),
+            UserEvent::TrayLeftClick => {
+                debug_note!("tray: left click");
+                self.toggle_brightness(el)
+            }
             UserEvent::Brightness(found) => {
                 for d in self.dialogs.values_mut() {
                     if let Kind::Brightness(p) = &mut d.kind {
@@ -833,6 +866,18 @@ impl ApplicationHandler<UserEvent> for App {
         let Some(d) = self.dialogs.get_mut(&id) else {
             return;
         };
+        if idlewalker_application::debug::enabled()
+            && matches!(
+                event,
+                WindowEvent::Focused(_)
+                    | WindowEvent::CloseRequested
+                    | WindowEvent::Moved(_)
+                    | WindowEvent::Resized(_)
+                    | WindowEvent::ScaleFactorChanged { .. }
+            )
+        {
+            debug_note!("dialog {:?}: {:?}", d.window.title(), event);
+        }
         let outcome = d.event(&event, &mut self.font, troupe);
         d.fit();
         match outcome {
@@ -882,7 +927,10 @@ pub fn run(wiring: Wiring) {
         }
     }
     let event_loop = match builder.build() {
-        Ok(el) => el,
+        Ok(el) => {
+            debug_note!("event loop: started");
+            el
+        }
         Err(e) => {
             wiring.journal.note(&format!("no event loop: {}", e));
             eprintln!("IdleWalker cannot start: {}", e);

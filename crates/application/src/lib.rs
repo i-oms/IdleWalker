@@ -2,6 +2,7 @@
 //! runs on. Everything it needs from outside is a port in `ports`, implemented by the
 //! platform crate and handed in by the composition root.
 pub mod brains;
+pub mod debug;
 pub mod jsonc;
 pub mod ports;
 pub mod posh;

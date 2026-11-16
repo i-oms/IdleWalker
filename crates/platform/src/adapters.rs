@@ -306,5 +306,39 @@ impl Journal for TempFileJournal {
             let d = DateTime::now();
             let _ = writeln!(f, "{:02}:{:02} {}", d.hour(), d.minute(), note);
         }
+        idlewalker_application::debug_note!("journal: {}", note);
     }
+}
+
+// ---- The debug trace ---------------------------------------------------------------------
+
+/// Where `--debug` writes its trace: started afresh each run.
+pub fn debug_log_path() -> PathBuf {
+    std::env::temp_dir().join("IdleWalker-debug.log")
+}
+
+/// Turns the debug trace on: each line goes to the log file and to stderr, stamped with
+/// the seconds since start and the thread that wrote it.
+pub fn start_debug_trace() {
+    use std::io::Write;
+    use std::sync::Mutex;
+    let path = debug_log_path();
+    let file = Mutex::new(std::fs::File::create(&path).ok());
+    let start = std::time::Instant::now();
+    idlewalker_application::debug::install(Box::new(move |line: &str| {
+        let t = start.elapsed().as_secs_f64();
+        let thread = std::thread::current();
+        let who = thread.name().unwrap_or("?");
+        let text = format!("{:9.3} [{}] {}", t, who, line);
+        eprintln!("{}", text);
+        if let Some(f) = file.lock().unwrap_or_else(|e| e.into_inner()).as_mut() {
+            let _ = writeln!(f, "{}", text);
+            let _ = f.flush();
+        }
+    }));
+    idlewalker_application::debug_note!(
+        "IdleWalker {} debug trace, written to {}",
+        env!("CARGO_PKG_VERSION"),
+        path.display()
+    );
 }

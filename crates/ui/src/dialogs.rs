@@ -183,9 +183,35 @@ impl Dialog {
             use winit::platform::windows::WindowAttributesExtWindows;
             attrs = attrs.with_skip_taskbar(bare);
         }
-        let window = Rc::new(el.create_window(attrs).ok()?);
-        let context = softbuffer::Context::new(window.clone()).ok()?;
-        let surface = softbuffer::Surface::new(&context, window.clone()).ok()?;
+        let window = match el.create_window(attrs) {
+            Ok(w) => Rc::new(w),
+            Err(e) => {
+                idlewalker_application::debug_note!("dialog {:?}: no window: {}", title, e);
+                return None;
+            }
+        };
+        let context = match softbuffer::Context::new(window.clone()) {
+            Ok(c) => c,
+            Err(e) => {
+                idlewalker_application::debug_note!(
+                    "dialog {:?}: no drawing context: {}",
+                    title,
+                    e
+                );
+                return None;
+            }
+        };
+        let surface = match softbuffer::Surface::new(&context, window.clone()) {
+            Ok(s) => s,
+            Err(e) => {
+                idlewalker_application::debug_note!(
+                    "dialog {:?}: no drawing surface: {}",
+                    title,
+                    e
+                );
+                return None;
+            }
+        };
         window.focus_window();
         Some(Dialog {
             window,
