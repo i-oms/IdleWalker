@@ -66,5 +66,8 @@ fn main() {
         test_menu: std::env::var("IDLEWALKER_TEST_MENU")
             .map(|ids| ids.split(',').map(str::to_string).collect())
             .unwrap_or_default(),
+        watch_relaunch: platform::watch_relaunch,
+        // The sign-in entry passes it (on Linux, where it matters).
+        started_at_login: std::env::args().any(|a| a == "--autostart"),
     });
 }

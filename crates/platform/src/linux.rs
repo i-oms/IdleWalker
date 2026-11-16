@@ -5,19 +5,22 @@
 //! sprites are shown rather than black boxes. Under Wayland the program runs through
 //! XWayland: walkers and the brightness panel work, but Wayland does not let any
 //! program read the global cursor, so the position only updates while the pointer is
-//! over an X11 window. See "Platform differences" in the README.
+//! over an X11 window (and starts out in the middle of the screen). `pointer_tracked`
+//! says so, and idleness comes from the compositor's idle clock over D-Bus instead.
+//! See "Platform differences" in docs/DEVELOPMENT.md.
 use super::{BrightnessInfo, Modifier, MouseButtons, Screen};
 use crate::prelude::*;
 use crate::rt::{Point, Rectangle};
 use std::ffi::CString;
 use std::path::PathBuf;
 use std::sync::OnceLock;
-use x11rb::connection::Connection;
+use x11rb::connection::{Connection, RequestConnection as _};
 use x11rb::protocol::randr::ConnectionExt as _;
 use x11rb::protocol::shape::{self, ConnectionExt as _};
 use x11rb::protocol::xproto::*;
 use x11rb::protocol::xtest::ConnectionExt as _;
 use x11rb::rust_connection::RustConnection;
+use x11rb::wrapper::ConnectionExt as _;
 
 struct X {
     conn: RustConnection,
@@ -110,16 +113,61 @@ pub(crate) fn hide_console(_c: &mut std::process::Command) {}
 pub fn init_process() {}
 
 /// False when another copy is already running; the lock is held until the process ends.
+/// The running copy is then asked to open its settings menu: some desktops (GNOME without
+/// the AppIndicator extension) have no tray at all, and launching the program again is
+/// how the menu is reached there.
 pub fn single_instance() -> bool {
     let Some(dir) = config_dir() else { return true };
     let _ = std::fs::create_dir_all(&dir);
     let Ok(path) = CString::new(dir.join("instance.lock").to_string_lossy().as_bytes()) else {
         return true;
     };
-    unsafe {
+    let first = unsafe {
         let fd = libc::open(path.as_ptr(), libc::O_CREAT | libc::O_RDWR, 0o600);
         fd < 0 || libc::flock(fd, libc::LOCK_EX | libc::LOCK_NB) == 0
+    };
+    if !first {
+        if let Some(socket) = relaunch_socket() {
+            use std::io::Write;
+            if let Ok(mut s) = std::os::unix::net::UnixStream::connect(socket) {
+                let _ = s.write_all(b"menu\n");
+            }
+        }
     }
+    first
+}
+
+/// Where a second copy finds the first: the per-user runtime folder when there is one.
+fn relaunch_socket() -> Option<PathBuf> {
+    std::env::var_os("XDG_RUNTIME_DIR")
+        .map(PathBuf::from)
+        .filter(|d| d.is_dir())
+        .or_else(config_dir)
+        .map(|d| d.join("idlewalker.sock"))
+}
+
+/// Calls `on_relaunch` whenever the program is started again while this copy runs.
+pub fn watch_relaunch(on_relaunch: Box<dyn Fn() + Send>) {
+    use std::io::Read;
+    let Some(path) = relaunch_socket() else {
+        return;
+    };
+    // Only the copy holding the instance lock gets here, so a file left there is stale.
+    let _ = std::fs::remove_file(&path);
+    let Ok(listener) = std::os::unix::net::UnixListener::bind(&path) else {
+        return;
+    };
+    let _ = std::thread::Builder::new()
+        .name("IdleWalker relaunch".into())
+        .spawn(move || {
+            for mut stream in listener.incoming().flatten() {
+                let mut asked = [0u8; 16];
+                let n = stream.read(&mut asked).unwrap_or(0);
+                if asked[..n].starts_with(b"menu") {
+                    on_relaunch();
+                }
+            }
+        });
 }
 
 pub fn lower_thread_priority() {
@@ -304,6 +352,132 @@ fn shorten_for_panels(x: &X, out: &mut [Screen]) {
     }
 }
 
+/// A Wayland session, where this program is an XWayland client.
+pub fn wayland() -> bool {
+    static WAYLAND: OnceLock<bool> = OnceLock::new();
+    *WAYLAND.get_or_init(|| {
+        std::env::var("XDG_SESSION_TYPE").is_ok_and(|t| t.eq_ignore_ascii_case("wayland"))
+            || std::env::var_os("WAYLAND_DISPLAY").is_some()
+    })
+}
+
+/// XWayland only sees the pointer, its buttons and the keys while an X11 window has them;
+/// the rest of the time it reports where the pointer last was.
+pub fn pointer_tracked() -> bool {
+    !wayland()
+}
+
+/// The compositor's idle clock under Wayland, read on a thread of its own so a slow
+/// D-Bus never holds up a frame. `None` on X11, where the cursor is tracked, and where
+/// the compositor has no idle clock to ask.
+pub fn input_idle_seconds() -> Option<f64> {
+    if !wayland() {
+        return None;
+    }
+    let watch = INPUT_WATCH.get_or_init(InputWatch::start);
+    let last = *watch.last_input.lock().unwrap_or_else(|e| e.into_inner());
+    last.map(|t| t.elapsed().as_secs_f64())
+}
+
+static INPUT_WATCH: OnceLock<InputWatch> = OnceLock::new();
+
+struct InputWatch {
+    /// When the person last did something; `None` until (or unless) the clock answers.
+    last_input: std::sync::Arc<std::sync::Mutex<Option<std::time::Instant>>>,
+}
+
+/// One compositor idle clock: who to ask, and whether it answers in milliseconds.
+struct IdleClock {
+    service: &'static str,
+    path: &'static str,
+    interface: &'static str,
+    method: &'static str,
+    /// GNOME's answer is documented as milliseconds. KDE's freedesktop.ScreenSaver one is
+    /// documented as seconds but has been milliseconds; only its going back is used.
+    exact_ms: bool,
+}
+
+const IDLE_CLOCKS: [IdleClock; 2] = [
+    IdleClock {
+        service: "org.gnome.Mutter.IdleMonitor",
+        path: "/org/gnome/Mutter/IdleMonitor/Core",
+        interface: "org.gnome.Mutter.IdleMonitor",
+        method: "GetIdletime",
+        exact_ms: true,
+    },
+    IdleClock {
+        service: "org.freedesktop.ScreenSaver",
+        path: "/org/freedesktop/ScreenSaver",
+        interface: "org.freedesktop.ScreenSaver",
+        method: "GetSessionIdleTime",
+        exact_ms: false,
+    },
+];
+
+impl IdleClock {
+    fn read(&self, bus: &zbus::blocking::Connection) -> Option<u64> {
+        let reply = bus
+            .call_method(
+                Some(self.service),
+                self.path,
+                Some(self.interface),
+                self.method,
+                &(),
+            )
+            .ok()?;
+        let body = reply.body();
+        if self.exact_ms {
+            body.deserialize::<u64>().ok()
+        } else {
+            body.deserialize::<u32>().ok().map(u64::from)
+        }
+    }
+}
+
+impl InputWatch {
+    fn start() -> InputWatch {
+        let last_input = std::sync::Arc::new(std::sync::Mutex::new(None));
+        let shared = last_input.clone();
+        let _ = std::thread::Builder::new()
+            .name("IdleWalker input watch".into())
+            .spawn(move || {
+                let Ok(bus) = zbus::blocking::Connection::session() else {
+                    return;
+                };
+                let Some(clock) = IDLE_CLOCKS.iter().find(|c| c.read(&bus).is_some()) else {
+                    return;
+                };
+                let mut previous: Option<u64> = None;
+                loop {
+                    let Some(value) = clock.read(&bus) else {
+                        std::thread::sleep(std::time::Duration::from_secs(2));
+                        continue;
+                    };
+                    let now = std::time::Instant::now();
+                    let at = if clock.exact_ms {
+                        now.checked_sub(std::time::Duration::from_millis(value))
+                    } else if value == 0 || previous.is_some_and(|p| value < p) {
+                        Some(now)
+                    } else if previous.is_none() {
+                        // Unknown units: until the clock goes back, count from now.
+                        Some(now)
+                    } else {
+                        None
+                    };
+                    previous = Some(value);
+                    if let Some(at) = at {
+                        let mut last = shared.lock().unwrap_or_else(|e| e.into_inner());
+                        if last.is_none_or(|l| at > l) {
+                            *last = Some(at);
+                        }
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(100));
+                }
+            });
+        InputWatch { last_input }
+    }
+}
+
 pub fn cursor_pos() -> Option<Point> {
     let x = x()?;
     let r = x.conn.query_pointer(x.root).ok()?.reply().ok()?;
@@ -410,6 +584,10 @@ pub fn keep_awake(on: bool) {
 
 pub fn system_idle_seconds() -> f64 {
     use x11rb::protocol::screensaver::ConnectionExt as _;
+    // XWayland's own clock only counts input that went to X11 windows.
+    if let Some(idle) = input_idle_seconds() {
+        return idle;
+    }
     let Some(x) = x() else { return 0.0 };
     x.conn
         .screensaver_query_info(x.root)
@@ -597,7 +775,9 @@ pub fn startup_set(enabled: bool) -> Result<(), String> {
         };
     }
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
-    let text = format!("[Desktop Entry]\nType=Application\nName=IdleWalker\nExec=\"{}\"\nX-GNOME-Autostart-enabled=true\n", exe.display());
+    // `--autostart` tells a start at login from one by hand: only the latter opens the
+    // settings menu when the desktop has no tray to show the icon in.
+    let text = format!("[Desktop Entry]\nType=Application\nName=IdleWalker\nExec=\"{}\" --autostart\nX-GNOME-Autostart-enabled=true\n", exe.display());
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     }
@@ -730,13 +910,90 @@ fn compositing(x: &X) -> bool {
             .is_some_and(|r| r.owner != 0)
 }
 
+/// How long a sprite window that could not be made waits before trying again: at the start
+/// of a session the program can be up before the compositor is.
+const SPRITE_RETRY: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// A rectangle as [left, right) x [top, bottom); empty when it has no area.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+struct Span {
+    left: i32,
+    top: i32,
+    right: i32,
+    bottom: i32,
+}
+
+impl Span {
+    fn of(r: Rectangle) -> Span {
+        Span {
+            left: r.left(),
+            top: r.top(),
+            right: r.right(),
+            bottom: r.bottom(),
+        }
+    }
+    fn is_empty(self) -> bool {
+        self.right <= self.left || self.bottom <= self.top
+    }
+    fn width(self) -> i32 {
+        self.right - self.left
+    }
+    fn height(self) -> i32 {
+        self.bottom - self.top
+    }
+    /// The smallest span holding both; an empty one adds nothing.
+    fn union(self, o: Span) -> Span {
+        if self.is_empty() {
+            return o;
+        }
+        if o.is_empty() {
+            return self;
+        }
+        Span {
+            left: self.left.min(o.left),
+            top: self.top.min(o.top),
+            right: self.right.max(o.right),
+            bottom: self.bottom.max(o.bottom),
+        }
+    }
+    /// The part inside a `w` by `h` canvas.
+    fn clip(self, w: i32, h: i32) -> Span {
+        let s = Span {
+            left: self.left.max(0),
+            top: self.top.max(0),
+            right: self.right.min(w),
+            bottom: self.bottom.min(h),
+        };
+        if s.is_empty() {
+            Span::default()
+        } else {
+            s
+        }
+    }
+}
+
 /// A borderless, always-on-top, click-through window that shows a `Surface` with
 /// per-pixel transparency. Never takes focus.
+///
+/// The window is as big as the whole canvas and keeps that size while the figure moves
+/// inside it: resizing a window that a compositor redirects gives it a new, empty pixmap
+/// that the compositor can show for a frame, which made the cast flicker when the window
+/// shrank to the drawn part every frame. Each frame is uploaded to a pixmap on the server
+/// first and then copied to the window in one request, so the compositor never catches a
+/// half-drawn frame either.
 pub struct SpriteWindow {
     win: Option<Window>,
     gc: Gcontext,
+    /// The frame being shown, as the server keeps it.
+    pixmap: Option<Pixmap>,
+    /// The window's (and the pixmap's) size.
+    size: (u16, u16),
+    pos: (i32, i32),
     visible: bool,
-    last: (i32, i32, u32, u32),
+    /// The part of the pixmap the last frame drew on, to clear with the next one.
+    drawn: Span,
+    /// After a failed attempt, when to try making the window again.
+    next_try: Option<std::time::Instant>,
     bytes: Vec<u8>,
 }
 
@@ -750,19 +1007,38 @@ impl SpriteWindow {
         let mut s = SpriteWindow {
             win: None,
             gc: 0,
+            pixmap: None,
+            size: (0, 0),
+            pos: (0, 0),
             visible: false,
-            last: (0, 0, 0, 0),
+            drawn: Span::default(),
+            next_try: None,
             bytes: Vec::new(),
         };
-        let Some(x) = x() else { return s };
+        s.ensure_window();
+        s
+    }
+
+    /// Makes the window if it is not there yet; false while that cannot be done.
+    fn ensure_window(&mut self) -> bool {
+        if self.win.is_some() {
+            return true;
+        }
+        let now = std::time::Instant::now();
+        if self.next_try.is_some_and(|t| now < t) {
+            return false;
+        }
+        self.next_try = Some(now + SPRITE_RETRY);
+        let Some(x) = x() else { return false };
+        // Without a 32-bit visual and a compositor the transparent parts would be black.
         let Some((visual, cm)) = x.visual else {
-            return s;
+            return false;
         };
         if !compositing(x) {
-            return s;
+            return false;
         }
         let Ok(win) = x.conn.generate_id() else {
-            return s;
+            return false;
         };
         let aux = CreateWindowAux::new()
             .override_redirect(1)
@@ -785,7 +1061,7 @@ impl SpriteWindow {
             )
             .is_err()
         {
-            return s;
+            return false;
         }
         // An empty input shape: every click falls through to what is underneath.
         let _ = x.conn.shape_rectangles(
@@ -797,62 +1073,176 @@ impl SpriteWindow {
             0,
             &[],
         );
+        // Compositors give menus and tooltips shadows and fades, which show as a dark
+        // box around the cast or make it blink; a drag-and-drop icon gets neither, and
+        // `_COMPTON_SHADOW` turns the shadow off in picom and compton. The class lets a
+        // person name these windows in their compositor's rules.
+        let a_type = atom(&x.conn, "_NET_WM_WINDOW_TYPE");
+        let a_dnd = atom(&x.conn, "_NET_WM_WINDOW_TYPE_DND");
+        if a_type != 0 && a_dnd != 0 {
+            let _ =
+                x.conn
+                    .change_property32(PropMode::REPLACE, win, a_type, AtomEnum::ATOM, &[a_dnd]);
+        }
+        let a_shadow = atom(&x.conn, "_COMPTON_SHADOW");
+        if a_shadow != 0 {
+            let _ = x.conn.change_property32(
+                PropMode::REPLACE,
+                win,
+                a_shadow,
+                AtomEnum::CARDINAL,
+                &[0],
+            );
+        }
+        let _ = x.conn.change_property8(
+            PropMode::REPLACE,
+            win,
+            AtomEnum::WM_CLASS,
+            AtomEnum::STRING,
+            b"idlewalker\0IdleWalker\0",
+        );
+        // No exposure events from copies: nothing reads this connection's events, so
+        // they would only pile up.
         if let Ok(gc) = x.conn.generate_id() {
-            if x.conn.create_gc(gc, win, &CreateGCAux::new()).is_ok() {
-                s.gc = gc;
+            let aux = CreateGCAux::new().graphics_exposures(0);
+            if x.conn.create_gc(gc, win, &aux).is_ok() {
+                self.gc = gc;
             }
         }
         let _ = x.conn.flush();
-        s.win = Some(win);
-        s
+        self.win = Some(win);
+        true
     }
 
     /// Shows the surface with its top-left corner at (x, y). Only the part that has
-    /// content is uploaded and shown; the window shrinks to fit it.
+    /// content now, or had it in the last frame, is uploaded.
     pub fn present(&mut self, surface: Surface, px: i32, py: i32) {
+        if !self.ensure_window() {
+            return;
+        }
         let (Some(win), Some(x)) = (self.win, x()) else {
             return;
         };
-        let mut b = surface.bounds();
-        if b.is_empty() {
-            b = Rectangle::new(0, 0, 1, 1);
+        let (sw, sh) = (surface.width(), surface.height());
+        if sw <= 0 || sh <= 0 {
+            self.hide();
+            return;
         }
-        let sw = surface.width();
-        self.bytes.clear();
-        self.bytes.reserve((b.width * b.height * 4) as usize);
-        let pixels = surface.pixels.as_slice();
-        for row in b.top()..b.bottom() {
-            let start = (row * sw + b.left()) as usize;
-            for v in &pixels[start..start + b.width as usize] {
-                self.bytes.extend_from_slice(&v.to_le_bytes());
+        let size = (
+            sw.min(u16::MAX as i32) as u16,
+            sh.min(u16::MAX as i32) as u16,
+        );
+        let (cw, ch) = (size.0 as i32, size.1 as i32);
+        // Whatever the window shows must be copied again once it is mapped or resized.
+        let mut whole = !self.visible;
+        if size != self.size || self.pixmap.is_none() {
+            if let Some(old) = self.pixmap.take() {
+                let _ = x.conn.free_pixmap(old);
+            }
+            let Ok(pixmap) = x.conn.generate_id() else {
+                return;
+            };
+            if x.conn
+                .create_pixmap(32, pixmap, win, size.0, size.1)
+                .is_err()
+            {
+                return;
+            }
+            // A new pixmap holds whatever was in that memory before.
+            let _ = x.conn.change_gc(self.gc, &ChangeGCAux::new().foreground(0));
+            let _ = x.conn.poly_fill_rectangle(
+                pixmap,
+                self.gc,
+                &[x11rb::protocol::xproto::Rectangle {
+                    x: 0,
+                    y: 0,
+                    width: size.0,
+                    height: size.1,
+                }],
+            );
+            self.pixmap = Some(pixmap);
+            self.drawn = Span::default();
+            whole = true;
+        }
+        let Some(pixmap) = self.pixmap else { return };
+
+        // This frame's content, and whatever the last one left that it must clear: the
+        // surface is empty outside its bounds.
+        let content = if surface.bounds().width > 0 && surface.bounds().height > 0 {
+            Span::of(surface.bounds()).clip(cw, ch)
+        } else {
+            Span::default()
+        };
+        let region = content.union(self.drawn).clip(cw, ch);
+        self.drawn = content;
+        if !region.is_empty() {
+            let row_bytes = region.width() as usize * 4;
+            let max_rows = (x.conn.maximum_request_bytes().saturating_sub(64) / row_bytes).max(1);
+            let pixels = surface.pixels.as_slice();
+            let mut row = region.top;
+            while row < region.bottom {
+                let rows = (max_rows.min(i32::MAX as usize) as i32).min(region.bottom - row);
+                self.bytes.clear();
+                self.bytes.reserve(rows as usize * row_bytes);
+                for r in row..row + rows {
+                    let start = (r * sw + region.left) as usize;
+                    for v in &pixels[start..start + region.width() as usize] {
+                        self.bytes.extend_from_slice(&v.to_le_bytes());
+                    }
+                }
+                let _ = x.conn.put_image(
+                    ImageFormat::Z_PIXMAP,
+                    pixmap,
+                    self.gc,
+                    region.width() as u16,
+                    rows as u16,
+                    region.left as i16,
+                    row as i16,
+                    0,
+                    32,
+                    &self.bytes,
+                );
+                row += rows;
             }
         }
-        let geometry = (px + b.left(), py + b.top(), b.width as u32, b.height as u32);
-        if geometry != self.last {
+
+        if size != self.size || (px, py) != self.pos {
             let aux = ConfigureWindowAux::new()
-                .x(geometry.0)
-                .y(geometry.1)
-                .width(geometry.2)
-                .height(geometry.3);
+                .x(px)
+                .y(py)
+                .width(size.0 as u32)
+                .height(size.1 as u32);
             let _ = x.conn.configure_window(win, &aux);
-            self.last = geometry;
+            self.size = size;
+            self.pos = (px, py);
         }
         if !self.visible {
             let _ = x.conn.map_window(win);
             self.visible = true;
         }
-        let _ = x.conn.put_image(
-            ImageFormat::Z_PIXMAP,
-            win,
-            self.gc,
-            b.width as u16,
-            b.height as u16,
-            0,
-            0,
-            0,
-            32,
-            &self.bytes,
-        );
+        let shown = if whole {
+            Span {
+                left: 0,
+                top: 0,
+                right: cw,
+                bottom: ch,
+            }
+        } else {
+            region
+        };
+        if !shown.is_empty() {
+            let _ = x.conn.copy_area(
+                pixmap,
+                win,
+                self.gc,
+                shown.left as i16,
+                shown.top as i16,
+                shown.left as i16,
+                shown.top as i16,
+                shown.width() as u16,
+                shown.height() as u16,
+            );
+        }
         let _ = x.conn.flush();
     }
 
@@ -876,9 +1266,41 @@ impl SpriteWindow {
 
 impl Drop for SpriteWindow {
     fn drop(&mut self) {
-        if let (Some(win), Some(x)) = (self.win, x()) {
-            let _ = x.conn.destroy_window(win);
-            let _ = x.conn.flush();
+        let Some(x) = x() else { return };
+        if let Some(pixmap) = self.pixmap.take() {
+            let _ = x.conn.free_pixmap(pixmap);
         }
+        if self.gc != 0 {
+            let _ = x.conn.free_gc(self.gc);
+        }
+        if let Some(win) = self.win {
+            let _ = x.conn.destroy_window(win);
+        }
+        let _ = x.conn.flush();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Span;
+
+    fn span(left: i32, top: i32, right: i32, bottom: i32) -> Span {
+        Span {
+            left,
+            top,
+            right,
+            bottom,
+        }
+    }
+
+    #[test]
+    fn a_frame_clears_what_the_last_one_drew_and_stays_on_the_canvas() {
+        let last = span(10, 10, 30, 40);
+        let now = span(20, 5, 50, 35);
+        assert_eq!(now.union(last), span(10, 5, 50, 40));
+        assert_eq!(span(-5, -5, 200, 20).clip(100, 50), span(0, 0, 100, 20));
+        // Nothing drawn now: only the old part is cleared.
+        assert_eq!(Span::default().union(last), last);
+        assert!(span(120, 0, 140, 10).clip(100, 50).is_empty());
     }
 }

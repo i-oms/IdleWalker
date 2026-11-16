@@ -236,7 +236,20 @@ impl Session {
     pub fn tick(&mut self, now: f64, dt: f64) -> TickReport {
         let mut report = TickReport::default();
         self.displays.refresh();
-        let moved = self.cursor.poll(self.desktop.cursor_pos(), now);
+        let tracked = self.desktop.pointer_tracked();
+        let mut moved = self.cursor.poll(self.desktop.cursor_pos(), now);
+        if !tracked {
+            // The cursor reading goes stale whenever the pointer is over a window the
+            // program cannot see into, so the compositor's idle clock says when the
+            // person last did something. Typing counts too: it cannot tell them apart.
+            if let Some(idle) = self.desktop.input_idle_seconds() {
+                let last_input = now - idle;
+                if last_input > self.cursor.last_move + 0.05 {
+                    self.cursor.last_move = last_input;
+                    moved = true;
+                }
+            }
+        }
         report.moved = moved;
         if moved {
             self.summoned = false;
@@ -287,8 +300,9 @@ impl Session {
             report.on_battery = Some(self.desktop.on_battery());
         }
 
-        // The hot corners: the cursor resting in a corner of any monitor.
-        if self.choices.corners && !self.full_screen {
+        // The hot corners: the cursor resting in a corner of any monitor. A cursor that
+        // cannot be followed would fire them from wherever it was last seen.
+        if self.choices.corners && !self.full_screen && tracked {
             let (mut fired, mut corner) = (0, Corner::default());
             if self.corners.step(
                 now,
@@ -320,7 +334,7 @@ impl Session {
                     self.desktop.perform_corner(action);
                 }
             }
-        } else if self.full_screen {
+        } else if self.full_screen || !tracked {
             self.corners.reset();
         }
 

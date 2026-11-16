@@ -33,10 +33,11 @@ The C# version leaned on Windows-only behaviour. Not all of it exists elsewhere:
 | Feature                               | Windows      | macOS                                                             | Linux on X11                                                  | Linux on Wayland (via XWayland)                                                     |
 | ------------------------------------- | ------------ | ----------------------------------------------------------------- | ------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
 | Walkers, click-through, always on top | Yes          | Yes                                                               | Yes (needs a compositor)                                      | Yes, above X11 and most native windows                                              |
-| Idle detection from the cursor        | Yes          | Yes                                                               | Yes                                                           | **Limited**: Wayland hides the cursor while it is over native Wayland windows |
-| Hot corners                           | Yes          | Yes                                                               | Yes                                                           | **Limited**, for the same reason                                              |
-| Click highlight                       | Yes          | Yes                                                               | Yes; a click shorter than the 30 ms poll can be missed        | **Limited**, for the same reason                                              |
-| Find cursor (a key pressed twice)     | Yes          | Yes                                                               | Yes; a tap shorter than the 30 ms poll can be missed          | **Limited**: keys are only seen while an X11 window has the focus             |
+| Tray icon                             | Yes          | Yes                                                               | StatusNotifierItem, else XEmbed; with neither, starting the program again opens its menu | Same as X11                                              |
+| Idle detection from the cursor        | Yes          | Yes                                                               | Yes                                                           | From the compositor's idle clock on GNOME and KDE (typing counts as activity too); elsewhere only while the pointer is over X11 windows |
+| Hot corners                           | Yes          | Yes                                                               | Yes                                                           | **No**: Wayland hides the cursor, and XWayland reports a stale position (greyed in the menu) |
+| Click highlight                       | Yes          | Yes                                                               | Yes; a click shorter than the 30 ms poll can be missed        | **No**, for the same reason (greyed in the menu)                              |
+| Find cursor (a key pressed twice)     | Yes          | Yes                                                               | Yes; a tap shorter than the 30 ms poll can be missed          | **No**, for the same reason (greyed in the menu)                              |
 | Corner actions                        | All          | Keys need the Accessibility permission                            | By desktop shortcuts: GNOME and KDE defaults, others may vary | Not reliable                                                                        |
 | Full-screen detection                 | Yes          | Active app only                                                   | Yes (needs an EWMH window manager)                            | X11 windows only                                                                    |
 | Brightness, built-in panel            | Yes          | Yes, through a private framework that a future macOS could remove | Yes (`brightnessctl` or a udev rule)                        | Same as X11                                                                         |
@@ -54,7 +55,8 @@ Differences on every OS, compared with the C# version:
 - **The settings menu is drawn by the program.** Native tray menus close after every click, so
   this one replaces them: it stays open while you change settings, and a click outside or Esc
   closes it. Groups open in place instead of as fly-outs. On Linux the desktop's own right-click
-  menu has a **Settings...** entry that opens it.
+  menu has a **Settings...** entry that opens it (an XEmbed tray icon opens it on a right-click),
+  and where there is no tray at all, starting the program again opens it.
 - **Dialogs are drawn by the program**, in one dark style with a bundled font, rather than
   with native Windows controls. "Forget everything..." asks inside the dashboard.
 - **The colour picker is three sliders**, in place of the Windows colour dialog.

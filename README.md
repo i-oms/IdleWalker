@@ -158,8 +158,10 @@ Turn on **Start at sign-in** in the settings menu (right-click the tray icon).
 <details>
 <summary><b>Does it work on Wayland?</b></summary>
 
-Yes, through XWayland, with some limits: Wayland hides the cursor from apps while it's over
-native Wayland windows, so idle detection and hot corners are less reliable there. See the
+Yes, through XWayland, with some limits. Wayland does not let apps follow the cursor, so hot
+corners, the click highlight and find cursor are unavailable there; on GNOME and KDE the walkers
+still know when you're idle from the desktop's own idle clock. For everything, pick an X11
+("Xorg") session at the login screen. See the
 [platform matrix](docs/DEVELOPMENT.md#platform-differences) for details.
 </details>
 
@@ -170,7 +172,7 @@ native Wayland windows, so idle detection and hot corners are less reliable ther
 | --- | --- |
 | Windows | Windows 10 1703 or later. Nothing to install. |
 | macOS | Nothing to install. Run it from Applications, not from the unzipped folder, or *Start at login* will point at a path that may go away. Hot corners that send keys ask for the Accessibility permission. |
-| Linux | glibc 2.28+ (Debian 10 / Ubuntu 20.04 and newer), X11 or XWayland with a compositing window manager. For the tray icon, StatusNotifierItem support (KDE, or GNOME with the AppIndicator extension). Optional: `ddcutil` for external monitor brightness and `brightnessctl` for the built-in panel. |
+| Linux | glibc 2.28+ (Debian 10 / Ubuntu 20.04 and newer), X11 or XWayland with a compositing window manager. For the tray icon, a StatusNotifierItem tray (KDE, Cinnamon, Budgie, newer Xfce, or GNOME with the AppIndicator extension) or an XEmbed one (Xfce, MATE, LXDE and most window-manager bars). Without either, start the program again to open its menu. Optional: `ddcutil` for external monitor brightness and `brightnessctl` for the built-in panel. |
 </details>
 
 <details>

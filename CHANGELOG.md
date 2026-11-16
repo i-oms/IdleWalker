@@ -8,6 +8,23 @@ Notable changes are recorded here. The format follows
 
 ### Fixed
 
+- Linux: the tray icon now also shows on panels that only take the older XEmbed system tray
+  (Xfce, MATE, LXDE and most window-manager bars), and appears once the panel is up when the
+  program started first at sign-in. Where the desktop has no tray at all (GNOME without the
+  AppIndicator extension), starting the program again opens its settings menu, and starting
+  it by hand opens the menu straight away.
+- Linux: walkers no longer flicker or glitch. Their windows kept shrinking to the drawn part
+  every frame, and a compositor briefly shows a resized window empty. Each window now keeps
+  the canvas size, and every frame reaches it in one copy. Compositor shadows and fades no
+  longer box or blink them.
+- Linux on Wayland: the click highlight and find cursor no longer show in the middle of the
+  screen. Wayland does not let a program follow the cursor, and XWayland keeps reporting its
+  starting point, the middle of the screen. These features and hot corners are now greyed
+  out there instead. Idle detection uses the compositor's idle clock (GNOME and KDE), so
+  walkers come out and go away as they should.
+- Linux: the settings menu and dialogs open where they belong and stay on top under Wayland
+  too, because they now run through XWayland like the walkers do.
+
 - Installing the Nerd Font from the terminal prompt window: Oh My Posh versions before 30
   are now run without their full-screen interface, a failed install is no longer reported
   as installed, its real error is shown instead of unreadable terminal codes, and only

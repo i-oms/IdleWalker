@@ -69,6 +69,19 @@ impl Modifier {
 pub trait Desktop: Send + Sync {
     /// Where the cursor is, in world pixels; `None` when the OS will not say.
     fn cursor_pos(&self) -> Option<Point>;
+    /// Whether `cursor_pos` and the button and key readings follow the person
+    /// everywhere. They do not under Wayland: XWayland only sees the pointer while it is
+    /// over an X11 window, and otherwise keeps reporting where it last was (the middle of
+    /// the screen until it first enters one). Features that point at the cursor are then
+    /// off, and idleness comes from `input_idle_seconds` instead.
+    fn pointer_tracked(&self) -> bool {
+        true
+    }
+    /// Seconds since the last keyboard or mouse input anywhere on the desktop, from the
+    /// compositor, for when the pointer is not tracked. `None` when nothing will say.
+    fn input_idle_seconds(&self) -> Option<f64> {
+        None
+    }
     fn mouse_button_down(&self) -> bool;
     /// Which main buttons are held, or were pressed since the last call: where the OS
     /// can say, a click shorter than the caller's poll is still reported once. For one

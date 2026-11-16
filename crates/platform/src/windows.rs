@@ -301,6 +301,9 @@ pub fn init_process() {
     unsafe { SetProcessDpiAwarenessContext(-4) }; // PER_MONITOR_AWARE_V2
 }
 
+/// The tray icon is always there, so a second start has nothing to ask of the first.
+pub fn watch_relaunch(_on_relaunch: Box<dyn Fn() + Send>) {}
+
 /// False when another copy is already running.
 pub fn single_instance() -> bool {
     if std::env::var_os("IDLEWALKER_TEST").is_some() {

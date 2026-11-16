@@ -46,6 +46,8 @@ use winit::window::WindowId;
 pub enum UserEvent {
     Tick,
     Menu(String),
+    /// Opens the settings menu, or brings it forward when it is already open.
+    ShowMenu,
     TrayLeftClick,
     Brightness(Vec<BrightnessInfo>),
     /// The answer of an update check; `asked` when the person started it from the menu.
@@ -84,6 +86,10 @@ pub struct Wiring {
     pub check_for_updates: bool,
     /// Menu items to fire at start-up, so a test can drive the menu.
     pub test_menu: Vec<String>,
+    /// Calls back whenever the program is started again while it runs.
+    pub watch_relaunch: fn(Box<dyn Fn() + Send>),
+    /// Started by the session at sign-in rather than by hand.
+    pub started_at_login: bool,
 }
 
 // ---- The frame pump ----------------------------------------------------------------------
@@ -168,6 +174,8 @@ struct App {
     on_painter_start: fn(),
     check_for_updates: bool,
     test_menu: Vec<String>,
+    watch_relaunch: fn(Box<dyn Fn() + Send>),
+    started_at_login: bool,
     ripple: Option<CornerRipple>,
     /// There only while "Highlight mouse clicks" is ticked.
     highlight: Option<ClickHighlight>,
@@ -214,6 +222,8 @@ impl App {
             on_painter_start: wiring.on_painter_start,
             check_for_updates: wiring.check_for_updates,
             test_menu: wiring.test_menu,
+            watch_relaunch: wiring.watch_relaunch,
+            started_at_login: wiring.started_at_login,
             ripple: None,
             highlight: None,
             finder: None,
@@ -353,8 +363,11 @@ impl App {
                 self.about = None;
             }
         }
+        // Where the cursor cannot be followed (Wayland), the click highlight and find
+        // cursor would mark the last place it was seen, so they stay off.
+        let tracked = self.desktop().pointer_tracked();
         // The click highlight: a spot under the cursor for as long as a button is down.
-        if self.session.choices().click_highlight {
+        if self.session.choices().click_highlight && tracked {
             let desktop = &self.services.desktop;
             let sprites = &self.pointer_sprites;
             let h = self.highlight.get_or_insert_with(|| {
@@ -374,7 +387,7 @@ impl App {
             self.highlight = None;
         }
         // Find cursor: the chosen key pressed twice lights up where the cursor is.
-        if self.session.choices().find_cursor {
+        if self.session.choices().find_cursor && tracked {
             let key = self.session.choices().find_key;
             let desktop = &self.services.desktop;
             let sprites = &self.pointer_sprites;
@@ -742,11 +755,21 @@ impl ApplicationHandler<UserEvent> for App {
         }
         self.started = true;
         self.tray = Tray::new(self.proxy.clone());
-        if self.tray.is_none() {
-            self.session
-                .journal()
-                .note("no tray icon: the desktop offers no notification area");
+        let shown = self.tray.as_ref().is_some_and(|t| t.shown());
+        if !shown {
+            self.session.journal().note(
+                "no tray icon: the desktop offers no notification area; start the program again to open its menu",
+            );
+            // Started by hand with nowhere to show the icon: show the menu, so it is
+            // plain that the program runs and how to reach it.
+            if !self.started_at_login {
+                let _ = self.proxy.send_event(UserEvent::ShowMenu);
+            }
         }
+        let proxy = self.proxy.clone();
+        (self.watch_relaunch)(Box::new(move || {
+            let _ = proxy.send_event(UserEvent::ShowMenu);
+        }));
         // Armed from the UI thread, which stays alive, so the request lasts the session.
         self.session.arm_keep_awake();
         self.paint.start(self.on_painter_start);
@@ -771,6 +794,16 @@ impl ApplicationHandler<UserEvent> for App {
                 self.on_tick(el);
             }
             UserEvent::Menu(id) => self.on_menu(&id, el),
+            UserEvent::ShowMenu => {
+                let open = self
+                    .dialogs
+                    .values()
+                    .find(|d| matches!(d.kind, Kind::Menu(_)));
+                match open {
+                    Some(d) => d.window.focus_window(),
+                    None => self.toggle_menu(el),
+                }
+            }
             UserEvent::TrayLeftClick => self.toggle_brightness(el),
             UserEvent::Brightness(found) => {
                 for d in self.dialogs.values_mut() {
@@ -837,6 +870,16 @@ pub fn run(wiring: Wiring) {
         // No Dock icon and no menu bar of its own: it lives in the status bar.
         use winit::platform::macos::{ActivationPolicy, EventLoopBuilderExtMacOS};
         builder.with_activation_policy(ActivationPolicy::Accessory);
+    }
+    #[cfg(target_os = "linux")]
+    {
+        // The walkers are X11 windows (through XWayland under Wayland), so the dialogs
+        // are too: then they share one coordinate space, and can be placed by the tray
+        // and kept on top, which Wayland does not let a program do.
+        use winit::platform::x11::EventLoopBuilderExtX11;
+        if std::env::var_os("DISPLAY").is_some() {
+            builder.with_x11();
+        }
     }
     let event_loop = match builder.build() {
         Ok(el) => el,

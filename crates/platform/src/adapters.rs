@@ -18,6 +18,14 @@ impl Desktop for NativeDesktop {
     fn cursor_pos(&self) -> Option<Point> {
         backend::cursor_pos()
     }
+    #[cfg(target_os = "linux")]
+    fn pointer_tracked(&self) -> bool {
+        backend::pointer_tracked()
+    }
+    #[cfg(target_os = "linux")]
+    fn input_idle_seconds(&self) -> Option<f64> {
+        backend::input_idle_seconds()
+    }
     fn mouse_button_down(&self) -> bool {
         backend::mouse_button_down()
     }

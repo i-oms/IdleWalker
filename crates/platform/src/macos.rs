@@ -94,6 +94,9 @@ pub(crate) fn hide_console(_c: &mut std::process::Command) {}
 
 pub fn init_process() {}
 
+/// The status item is always there, so a second start has nothing to ask of the first.
+pub fn watch_relaunch(_on_relaunch: Box<dyn Fn() + Send>) {}
+
 /// False when another copy is already running; the lock is held until the process ends.
 pub fn single_instance() -> bool {
     flock_instance()
