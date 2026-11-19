@@ -2,7 +2,7 @@
 //! The same Win32 calls as the C# original's Native.cs, declared by hand so there is
 //! no dependency beyond what ships with Windows.
 #![allow(non_snake_case, non_camel_case_types)]
-use super::{BrightnessInfo, Modifier, MouseButtons, Screen};
+use super::{BrightnessInfo, Modifier, MouseButtons, Screen, Screenshot};
 use crate::prelude::*;
 use std::collections::HashMap;
 use std::ffi::c_void;
@@ -180,6 +180,8 @@ extern "system" {
     fn mouse_event(flags: u32, dx: i32, dy: i32, data: u32, extra: usize);
     fn LockWorkStation() -> i32;
     fn GetLastInputInfo(i: *mut LASTINPUTINFO) -> i32;
+    fn GetDC(h: HWND) -> isize;
+    fn ReleaseDC(h: HWND, dc: isize) -> i32;
 }
 #[repr(C)]
 struct WNDCLASSW {
@@ -206,6 +208,17 @@ extern "system" {
         off: u32,
     ) -> isize;
     fn SelectObject(dc: isize, o: isize) -> isize;
+    fn BitBlt(
+        dst: isize,
+        x: i32,
+        y: i32,
+        w: i32,
+        h: i32,
+        src: isize,
+        sx: i32,
+        sy: i32,
+        rop: u32,
+    ) -> i32;
     fn DeleteDC(dc: isize) -> i32;
     fn DeleteObject(o: isize) -> i32;
 }
@@ -483,10 +496,20 @@ pub fn on_battery() -> bool {
 
 // ---- Keeping the machine awake -----------------------------------------------------------
 
-/// Stops idle sleep, and with `on` the screen saver and monitor-off, until released.
-/// The request lives on the calling thread, so it must stay alive: the UI thread.
-pub fn keep_awake(on: bool) {
-    unsafe { SetThreadExecutionState(if on { 0x80000003 } else { 0x80000000 }) };
+/// Stops idle sleep with `system`, and with `display` the screen saver and monitor-off
+/// too, until released. The request lives on the calling thread, so it must stay alive:
+/// the UI thread.
+pub fn keep_awake(system: bool, display: bool) {
+    // ES_CONTINUOUS, with ES_SYSTEM_REQUIRED and ES_DISPLAY_REQUIRED as asked.
+    let wanted = 0x80000000 | (system || display) as u32 | (display as u32) << 1;
+    unsafe { SetThreadExecutionState(wanted) };
+}
+
+/// Shuts the computer down, or restarts it, at once. Not forced: Windows still asks
+/// about unsaved work, as it does from the Start menu.
+pub fn power(restart: bool) -> bool {
+    let what = if restart { "/r" } else { "/s" };
+    super::spawn("shutdown.exe", &[what, "/t", "0"])
 }
 
 /// Seconds since the last input of any kind, as Windows counts it for the screen saver.
@@ -1307,6 +1330,79 @@ pub fn brightness_write(key: &str, percent: i32) {
             }
         }
     }
+}
+
+// ---- Screenshots ---------------------------------------------------------------------------
+
+/// A picture of every monitor, the primary first, as PNG files in `dir`. What Windows
+/// keeps out of captures (protected video, this program's own walkers) is not in them,
+/// and the secure desktop (UAC, the lock screen) cannot be read at all.
+pub fn screenshots(dir: &std::path::Path) -> Vec<Screenshot> {
+    const SRCCOPY: u32 = 0x00CC0020;
+    const CAPTUREBLT: u32 = 0x40000000; // layered windows too
+    let mut out = Vec::new();
+    for (i, s) in screens().iter().enumerate() {
+        let b = s.bounds;
+        if b.width <= 0 || b.height <= 0 {
+            continue;
+        }
+        let mut rgb: Vec<u8> = Vec::new();
+        unsafe {
+            let screen = GetDC(0);
+            let dc = CreateCompatibleDC(screen);
+            let header = BITMAPINFOHEADER {
+                size: 40,
+                width: b.width,
+                height: -b.height, // top row first
+                planes: 1,
+                bits: 32,
+                ..Default::default()
+            };
+            let mut bits: *mut c_void = std::ptr::null_mut();
+            let dib = CreateDIBSection(0, &header, 0, &mut bits, 0, 0);
+            if dc != 0 && dib != 0 && !bits.is_null() {
+                let previous = SelectObject(dc, dib);
+                let copied = BitBlt(
+                    dc,
+                    0,
+                    0,
+                    b.width,
+                    b.height,
+                    screen,
+                    b.x,
+                    b.y,
+                    SRCCOPY | CAPTUREBLT,
+                );
+                if copied != 0 {
+                    let count = b.width as usize * b.height as usize;
+                    let pixels = std::slice::from_raw_parts(bits as *const u8, count * 4);
+                    rgb.reserve_exact(count * 3);
+                    // Blue, green, red and a spare byte, as GDI keeps them.
+                    for p in pixels.as_chunks::<4>().0 {
+                        rgb.extend_from_slice(&[p[2], p[1], p[0]]);
+                    }
+                }
+                SelectObject(dc, previous);
+            }
+            if dib != 0 {
+                DeleteObject(dib);
+            }
+            if dc != 0 {
+                DeleteDC(dc);
+            }
+            ReleaseDC(0, screen);
+        }
+        let path = dir.join(format!("screen-{}.png", i + 1));
+        if !rgb.is_empty() && crate::write_png(&path, b.width as u32, b.height as u32, &rgb) {
+            out.push(Screenshot {
+                primary: s.primary,
+                width: b.width,
+                height: b.height,
+                path,
+            });
+        }
+    }
+    out
 }
 
 // ---- The sprite window ---------------------------------------------------------------------

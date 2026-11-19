@@ -17,6 +17,9 @@ pub struct Choices {
     pub hide_on_move: bool,
     pub corners: bool,
     pub keep_awake: bool,
+    /// The machine does not go to sleep on its own; the screen still may. What keeps a
+    /// remote within reach, so that "keep awake" can be switched on from afar.
+    pub prevent_sleep: bool,
     /// A coloured spot under the cursor at every click.
     pub click_highlight: bool,
     /// Pressing `find_key` twice shows where the cursor is.
@@ -164,6 +167,7 @@ impl Session {
             hide_on_move: prefs.load_hide_on_move(),
             corners: prefs.load_hot_corners_enabled(),
             keep_awake: prefs.load_keep_awake(),
+            prevent_sleep: prefs.load_prevent_sleep(),
             click_highlight: prefs.load_click_highlight(),
             find_cursor: prefs.load_find_cursor(),
             find_key: prefs.load_find_key(),
@@ -229,7 +233,10 @@ impl Session {
 
     /// Arms "keep awake" as chosen; call from a thread that lives as long as the program.
     pub fn arm_keep_awake(&self) {
-        self.desktop.keep_awake(self.choices.keep_awake);
+        // "Keep awake" holds the screen on too; "prevent sleep" only the machine.
+        let c = &self.choices;
+        self.desktop
+            .keep_awake(c.keep_awake || c.prevent_sleep, c.keep_awake);
     }
 
     /// One frame. `now` is seconds since start, `dt` the step for the cast.
@@ -424,7 +431,12 @@ impl Session {
             "keep-awake" => {
                 self.choices.keep_awake = !self.choices.keep_awake;
                 prefs.save_keep_awake(self.choices.keep_awake);
-                self.desktop.keep_awake(self.choices.keep_awake);
+                self.arm_keep_awake();
+            }
+            "prevent-sleep" => {
+                self.choices.prevent_sleep = !self.choices.prevent_sleep;
+                prefs.save_prevent_sleep(self.choices.prevent_sleep);
+                self.arm_keep_awake();
             }
             "click-highlight" => {
                 self.choices.click_highlight = !self.choices.click_highlight;
@@ -492,7 +504,7 @@ impl Session {
 
     /// At exit: lets the machine sleep again and saves what was learned.
     pub fn shut_down(&self) {
-        self.desktop.keep_awake(false);
+        self.desktop.keep_awake(false, false);
         self.brains.save(self.troupe);
     }
 }

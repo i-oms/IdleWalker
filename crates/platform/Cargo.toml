@@ -11,6 +11,10 @@ idlewalker-domain.workspace = true
 idlewalker-rendering.workspace = true
 idlewalker-application.workspace = true
 
+# Screenshots: macOS has a tool that writes the file itself.
+[target.'cfg(not(target_os = "macos"))'.dependencies]
+png = "0.17"
+
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 

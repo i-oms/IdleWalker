@@ -119,6 +119,13 @@ impl Preferences {
         "KeepAwake",
         Settings::KEEP_AWAKE_BY_DEFAULT
     );
+    // Off until asked for, like "Keep system awake": blocking sleep is never silent.
+    switch!(
+        load_prevent_sleep,
+        save_prevent_sleep,
+        "PreventSleep",
+        false
+    );
     // Off until asked for: it draws over whatever the person is working on.
     switch!(
         load_click_highlight,
@@ -127,6 +134,13 @@ impl Preferences {
         false
     );
     switch!(load_find_cursor, save_find_cursor, "FindCursor", false);
+    // Off until asked for: nothing reaches the network unasked.
+    switch!(
+        load_telegram_remote,
+        save_telegram_remote,
+        "TelegramRemote",
+        false
+    );
 
     /// The key that, pressed twice, finds the cursor.
     pub fn load_find_key(&self) -> Modifier {

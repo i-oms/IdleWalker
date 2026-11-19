@@ -6,7 +6,7 @@
 //! XWayland: walkers and the brightness panel work, but Wayland does not let any
 //! program read the global cursor, so the position only updates while the pointer is
 //! over an X11 window. See "Platform differences" in the README.
-use super::{BrightnessInfo, Modifier, MouseButtons, Screen};
+use super::{BrightnessInfo, Modifier, MouseButtons, Screen, Screenshot};
 use crate::prelude::*;
 use crate::rt::{Point, Rectangle};
 use std::ffi::CString;
@@ -385,7 +385,7 @@ pub fn on_battery() -> bool {
 // ---- Keeping the machine awake ---------------------------------------------------------------
 
 /// A `systemd-inhibit` child holds off idle and sleep, for as long as it lives.
-pub fn keep_awake(on: bool) {
+pub fn keep_awake(system: bool, display: bool) {
     use std::sync::Mutex;
     static CHILD: Mutex<Option<std::process::Child>> = Mutex::new(None);
     let mut child = CHILD.lock().unwrap();
@@ -393,10 +393,16 @@ pub fn keep_awake(on: bool) {
         let _ = c.kill();
         let _ = c.wait();
     }
-    if on {
+    if system || display {
+        // "idle" is what blanks and locks the screen; "sleep" alone leaves that be.
+        let what = if display {
+            "--what=idle:sleep"
+        } else {
+            "--what=sleep"
+        };
         *child = std::process::Command::new("systemd-inhibit")
             .args([
-                "--what=idle:sleep",
+                what,
                 "--who=IdleWalker",
                 "--why=Keep system awake",
                 "--mode=block",
@@ -406,6 +412,13 @@ pub fn keep_awake(on: bool) {
             .spawn()
             .ok();
     }
+}
+
+/// Shuts the computer down, or restarts it, through logind, which lets the person at
+/// the seat do so without a password.
+pub fn power(restart: bool) -> bool {
+    let what = if restart { "reboot" } else { "poweroff" };
+    super::spawn("systemctl", &[what])
 }
 
 pub fn system_idle_seconds() -> f64 {
@@ -717,6 +730,66 @@ pub fn brightness_write(key: &str, percent: i32) {
             &["--display", id, "setvcp", "10", &percent.to_string()],
         );
     }
+}
+
+// ---- Screenshots ---------------------------------------------------------------------------------------
+
+/// A picture of every monitor, the primary first, as PNG files in `dir`: the root window
+/// as the X server shows it. Under Wayland that is only what XWayland draws, so windows
+/// of Wayland programs are missing from it.
+pub fn screenshots(dir: &std::path::Path) -> Vec<Screenshot> {
+    let Some(x) = x() else { return vec![] };
+    let setup = x.conn.setup();
+    let lsb_first = setup.image_byte_order == ImageOrder::LSB_FIRST;
+    let mut out = Vec::new();
+    for (i, s) in read_screens().iter().enumerate() {
+        let b = s.bounds;
+        if b.width <= 0 || b.height <= 0 {
+            continue;
+        }
+        let image = x
+            .conn
+            .get_image(
+                ImageFormat::Z_PIXMAP,
+                x.root,
+                b.x as i16,
+                b.y as i16,
+                b.width as u16,
+                b.height as u16,
+                !0,
+            )
+            .ok()
+            .and_then(|r| r.reply().ok());
+        let Some(image) = image else { continue };
+        // Only true colour in four bytes a pixel, which is what every desktop runs.
+        let four_bytes = setup
+            .pixmap_formats
+            .iter()
+            .any(|f| f.depth == image.depth && f.bits_per_pixel == 32);
+        let count = b.width as usize * b.height as usize;
+        if !four_bytes || image.data.len() < count * 4 {
+            continue;
+        }
+        let mut rgb = Vec::with_capacity(count * 3);
+        for p in image.data[..count * 4].as_chunks::<4>().0 {
+            // The pixel is 0x00RRGGBB, in the server's byte order.
+            if lsb_first {
+                rgb.extend_from_slice(&[p[2], p[1], p[0]]);
+            } else {
+                rgb.extend_from_slice(&[p[1], p[2], p[3]]);
+            }
+        }
+        let path = dir.join(format!("screen-{}.png", i + 1));
+        if crate::write_png(&path, b.width as u32, b.height as u32, &rgb) {
+            out.push(Screenshot {
+                primary: s.primary,
+                width: b.width,
+                height: b.height,
+                path,
+            });
+        }
+    }
+    out
 }
 
 // ---- The sprite window ---------------------------------------------------------------------------------

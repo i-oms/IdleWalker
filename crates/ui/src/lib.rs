@@ -14,6 +14,7 @@ pub mod gfx;
 pub mod menu_panel;
 pub mod overlays;
 pub mod posh_dialog;
+pub mod remote;
 pub mod tray;
 pub mod update;
 
@@ -28,8 +29,8 @@ use dialogs::{
 };
 use gfx::Font;
 use idlewalker_application::{
-    Brains, BrightnessInfo, Desktop, Indicator, Journal, Posh, Screen, Session, UpdateState,
-    Updates,
+    Brains, BrightnessInfo, Desktop, Indicator, Journal, Posh, Screen, Session, Telegram,
+    UpdateState, Updates,
 };
 use overlays::{AboutToast, ClickHighlight, CornerRipple, DisplayBadges, FindCursor};
 use std::collections::HashMap;
@@ -55,6 +56,12 @@ pub enum UserEvent {
     },
     /// A terminal prompt task has finished.
     Posh(Box<idlewalker_application::posh::Done>),
+    /// The paired Telegram chat said or pressed something; what to say back goes to the
+    /// sender, which the remote's worker is waiting on.
+    Remote(
+        idlewalker_application::telegram::Update,
+        std::sync::mpsc::Sender<Vec<idlewalker_application::telegram::Call>>,
+    ),
 }
 
 /// What the dialogs use besides the cast.
@@ -64,6 +71,7 @@ pub struct Services {
     pub brains: Brains,
     pub updates: Updates,
     pub posh: Posh,
+    pub telegram: Telegram,
 }
 
 /// Everything the presentation layer is handed by the composition root.
@@ -76,6 +84,10 @@ pub struct Wiring {
     pub updates: Updates,
     /// The terminal prompt use case.
     pub posh: Posh,
+    /// The Telegram remote use case.
+    pub telegram: Telegram,
+    /// Whether the remote may listen to Telegram at all; off for test runs.
+    pub listen_to_telegram: bool,
     /// For trouble before the session exists.
     pub journal: Arc<dyn Journal>,
     /// Runs first on each painter thread.
@@ -167,6 +179,7 @@ struct App {
     pointer_sprites: SpriteFactory,
     on_painter_start: fn(),
     check_for_updates: bool,
+    listen_to_telegram: bool,
     test_menu: Vec<String>,
     ripple: Option<CornerRipple>,
     /// There only while "Highlight mouse clicks" is ticked.
@@ -204,6 +217,7 @@ impl App {
             brains: session.brains().clone(),
             updates: wiring.updates,
             posh: wiring.posh,
+            telegram: wiring.telegram,
         };
         App {
             pump: Arc::new(PumpState::default()),
@@ -213,6 +227,7 @@ impl App {
             pointer_sprites: wiring.pointer_sprites,
             on_painter_start: wiring.on_painter_start,
             check_for_updates: wiring.check_for_updates,
+            listen_to_telegram: wiring.listen_to_telegram,
             test_menu: wiring.test_menu,
             ripple: None,
             highlight: None,
@@ -433,8 +448,27 @@ impl App {
             .show(x, y, s.cell());
     }
 
+    /// The whole menu as it stands, the Telegram remote's group included.
+    fn menu_nodes(&self) -> Vec<tray::Node> {
+        let telegram = &self.services.telegram;
+        let remote = tray::RemoteState {
+            enabled: telegram.enabled(),
+            link: telegram.link(),
+        };
+        tray::build(self.session.choices(), self.desktop(), Some(remote))
+    }
+
+    /// Opens the file the bot token goes in, in whatever edits text here, and switches
+    /// the remote on: once the token is saved, the first chat to write to the bot pairs.
+    fn set_up_telegram(&self) {
+        let telegram = &self.services.telegram;
+        telegram.enable();
+        let file = telegram.setup_file();
+        self.desktop().open_url(&file.display().to_string());
+    }
+
     fn update_menu(&mut self) {
-        let nodes = tray::build(self.session.choices(), &*self.services.desktop);
+        let nodes = self.menu_nodes();
         for d in self.dialogs.values_mut() {
             if let Kind::Menu(p) = &mut d.kind {
                 p.nodes = nodes;
@@ -454,6 +488,8 @@ impl App {
                 "brains" => self.open_brains(el),
                 "posh" => self.open_posh(el),
                 "check-update" => self.check_for_update(el),
+                "telegram" => self.services.telegram.toggle(),
+                "telegram-setup" => self.set_up_telegram(),
                 "about" => {
                     if self.about.is_none() {
                         let screen = self
@@ -697,7 +733,7 @@ impl App {
         let (screen, cursor_x) = self.screen_under_cursor();
         let s = screen.dpi_scale;
         let place = TrayPlace::new(&screen, cursor_x, 300.0);
-        let nodes = tray::build(self.session.choices(), self.desktop());
+        let nodes = self.menu_nodes();
         let panel = menu_panel::MenuPanel::new(nodes);
         let size = (
             (300.0 * s) as u32,
@@ -758,6 +794,15 @@ impl ApplicationHandler<UserEvent> for App {
         if self.check_for_updates {
             update::spawn_periodic(self.proxy.clone(), self.services.updates.clone());
         }
+        if self.listen_to_telegram {
+            let worker = remote::Remote {
+                telegram: self.services.telegram.clone(),
+                desktop: self.services.desktop.clone(),
+                updates: self.services.updates.clone(),
+                journal: self.session.journal().clone(),
+            };
+            remote::spawn(self.proxy.clone(), worker);
+        }
         el.set_control_flow(ControlFlow::Wait);
         for id in &self.test_menu {
             let _ = self.proxy.send_event(UserEvent::Menu(id.clone()));
@@ -791,6 +836,12 @@ impl ApplicationHandler<UserEvent> for App {
                         break;
                     }
                 }
+            }
+            UserEvent::Remote(update, reply) => {
+                let calls = remote::respond(&mut self.session, &update);
+                let _ = reply.send(calls);
+                // An open menu on the computer shows what the chat just changed.
+                self.update_menu();
             }
         }
     }

@@ -1,9 +1,11 @@
 //! The OS backends behind the ports. Each implementation only forwards to the backend
 //! compiled for this OS, so the ports stay the one place a capability is described.
 use crate::prelude::*;
-use crate::{backend, BrightnessInfo, Modifier, MonitorWorld, MouseButtons, Screen, SpriteWindow};
+use crate::{
+    backend, BrightnessInfo, Modifier, MonitorWorld, MouseButtons, Screen, Screenshot, SpriteWindow,
+};
 use idlewalker_application::{
-    Desktop, Displays, Journal, Os, ReleaseFeed, RunResult, Updates, Workstation,
+    Desktop, Displays, Journal, Os, Power, ReleaseFeed, RunResult, Updates, WebPost, Workstation,
 };
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -45,8 +47,11 @@ impl Desktop for NativeDesktop {
     fn nudge_activity(&self) {
         backend::nudge_activity()
     }
-    fn keep_awake(&self, on: bool) {
-        backend::keep_awake(on)
+    fn keep_awake(&self, system: bool, display: bool) {
+        backend::keep_awake(system, display)
+    }
+    fn power(&self, what: Power) -> bool {
+        backend::power(what == Power::Restart)
     }
     fn is_fullscreen(&self) -> bool {
         backend::is_fullscreen()
@@ -97,6 +102,9 @@ impl Desktop for NativeDesktop {
     }
     fn brightness_write(&self, key: &str, percent: i32) {
         backend::brightness_write(key, percent)
+    }
+    fn screenshots(&self, dir: &Path) -> Vec<Screenshot> {
+        backend::screenshots(dir)
     }
 }
 
@@ -178,6 +186,27 @@ impl ReleaseFeed for CurlReleaseFeed {
         } else {
             format!("idlewalker-{version}-linux-x64.zip")
         }
+    }
+}
+
+// ---- Web services ------------------------------------------------------------------------
+
+/// The web, reached with curl like the releases are.
+pub struct CurlWeb;
+
+impl WebPost for CurlWeb {
+    fn post_json(&self, url: &str, body: &str, max_seconds: u32) -> Option<String> {
+        crate::post_json(url, body, max_seconds)
+    }
+    fn post_file(
+        &self,
+        url: &str,
+        fields: &[(&str, &str)],
+        field: &str,
+        file: &Path,
+        max_seconds: u32,
+    ) -> Option<String> {
+        crate::post_file(url, fields, field, file, max_seconds)
     }
 }
 
