@@ -412,6 +412,14 @@ pub fn keep_awake(system: bool, display: bool) {
     }
 }
 
+/// Shuts the computer down, or restarts it, through System Events: the same polite
+/// request the Apple menu makes, so an app with unsaved work may still hold it up.
+pub fn power(restart: bool) -> bool {
+    let what = if restart { "restart" } else { "shut down" };
+    let script = format!("tell application \"System Events\" to {what}");
+    super::spawn("osascript", &["-e", &script])
+}
+
 pub fn system_idle_seconds() -> f64 {
     unsafe { CGEventSourceSecondsSinceLastEventType(0, u32::MAX) }
 }

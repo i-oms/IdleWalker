@@ -62,6 +62,13 @@ impl Modifier {
     }
 }
 
+/// Ways of turning the computer off.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Power {
+    ShutDown,
+    Restart,
+}
+
 // ---- The desktop -------------------------------------------------------------------------
 
 /// The OS services the program uses. Every method is cheap unless it says otherwise,
@@ -89,6 +96,10 @@ pub trait Desktop: Send + Sync {
     /// and monitor-off too. Sleep the person asks for (the lid, the power button) and a
     /// battery running out are not held off.
     fn keep_awake(&self, system: bool, display: bool);
+    /// Asks the OS to shut the computer down or restart it, the way its own menu does:
+    /// an app with unsaved work may still hold it up. False when the request could not
+    /// even be made.
+    fn power(&self, what: Power) -> bool;
     /// Whether the foreground app covers its whole monitor.
     fn is_fullscreen(&self) -> bool;
     /// What is in front, for the log.

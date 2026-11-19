@@ -414,6 +414,13 @@ pub fn keep_awake(system: bool, display: bool) {
     }
 }
 
+/// Shuts the computer down, or restarts it, through logind, which lets the person at
+/// the seat do so without a password.
+pub fn power(restart: bool) -> bool {
+    let what = if restart { "reboot" } else { "poweroff" };
+    super::spawn("systemctl", &[what])
+}
+
 pub fn system_idle_seconds() -> f64 {
     use x11rb::protocol::screensaver::ConnectionExt as _;
     let Some(x) = x() else { return 0.0 };

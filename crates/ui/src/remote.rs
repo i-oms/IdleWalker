@@ -12,7 +12,7 @@ use idlewalker_application::telegram::{
     Button, Call, Keyboard, Link, Polled, Update, What, COMMANDS, LONG_POLL_SECONDS,
 };
 use idlewalker_application::{
-    BrightnessInfo, Desktop, Indicator, Journal, Session, Telegram, UpdateState, Updates,
+    BrightnessInfo, Desktop, Indicator, Journal, Power, Session, Telegram, UpdateState, Updates,
 };
 use std::sync::mpsc;
 use std::sync::Arc;
@@ -36,6 +36,11 @@ mod data {
     pub const ABOUT: &str = "i";
     pub const EXIT: &str = "x";
     pub const EXIT_SURE: &str = "x!";
+    /// Asks first; with "!" it is done.
+    pub const SHUT_DOWN: &str = "s";
+    pub const SHUT_DOWN_SURE: &str = "s!";
+    pub const RESTART: &str = "r";
+    pub const RESTART_SURE: &str = "r!";
 }
 
 const NOT_NOW: &str = "Not available while its feature is off.";
@@ -167,6 +172,13 @@ fn keyboard(at: &[Node], path: &str, on: bool) -> Keyboard {
     }
     let mut keys = rows(buttons);
     let refresh = Button::new("\u{1F504} Refresh", format!("{}{path}", data::PAGE));
+    if path.is_empty() {
+        // The computer itself, which the menu on it has no need to offer.
+        keys.push(vec![
+            Button::new("\u{23FB} Shut down", data::SHUT_DOWN),
+            Button::new("\u{1F501} Restart", data::RESTART),
+        ]);
+    }
     keys.push(match path.rsplit_once('.') {
         _ if path.is_empty() => vec![refresh],
         parent => {
@@ -551,6 +563,37 @@ fn exit_page() -> (String, Keyboard) {
     (text.into(), keys)
 }
 
+fn power_page(what: Power) -> (String, Keyboard) {
+    let (text, yes, sure) = match what {
+        Power::ShutDown => (
+            "Shut the computer down?\n\n\
+             It cannot be switched on again from here, and unsaved work may be lost.",
+            "Yes, shut down",
+            data::SHUT_DOWN_SURE,
+        ),
+        Power::Restart => (
+            "Restart the computer?\n\n\
+             Unsaved work may be lost. This remote answers again once you are signed in \
+             and IdleWalker has started.",
+            "Yes, restart",
+            data::RESTART_SURE,
+        ),
+    };
+    let keys = vec![vec![
+        Button::new(yes, sure),
+        Button::new("\u{2039} No", data::PAGE),
+    ]];
+    (text.into(), keys)
+}
+
+/// What is left to do once the answer has been sent.
+enum After {
+    Nothing,
+    /// IdleWalker quits.
+    Quit,
+    Power(Power),
+}
+
 impl Remote {
     fn about(&self) -> String {
         format!(
@@ -595,8 +638,8 @@ impl Remote {
     }
 
     /// What the worker answers itself: the slow things, and leaving. `None` for what is
-    /// the UI thread's to answer. The flag says the program is to quit afterwards.
-    fn own(&self, update: &Update) -> Option<(Vec<Call>, bool)> {
+    /// the UI thread's to answer. With it, what to do once it has been said.
+    fn own(&self, update: &Update) -> Option<(Vec<Call>, After)> {
         let chat = update.chat;
         let calls = match &update.what {
             What::Text(text) => {
@@ -611,6 +654,15 @@ impl Remote {
                     "about" => say(chat, &self.about()),
                     "exit" => {
                         let (text, keys) = exit_page();
+                        vec![Call::send(chat, &text, Some(&keys))]
+                    }
+                    "shutdown" | "restart" => {
+                        let what = if name == "restart" {
+                            Power::Restart
+                        } else {
+                            Power::ShutDown
+                        };
+                        let (text, keys) = power_page(what);
                         vec![Call::send(chat, &text, Some(&keys))]
                     }
                     _ => return None,
@@ -631,7 +683,22 @@ impl Remote {
                     vec![done, Call::edit(chat, *message, &text, &keys)]
                 } else if what == data::EXIT_SURE {
                     let gone = Call::edit(chat, *message, "IdleWalker has quit.", &Vec::new());
-                    return Some((vec![done, gone], true));
+                    return Some((vec![done, gone], After::Quit));
+                } else if what == data::SHUT_DOWN || what == data::RESTART {
+                    let (text, keys) = power_page(if what == data::RESTART {
+                        Power::Restart
+                    } else {
+                        Power::ShutDown
+                    });
+                    vec![done, Call::edit(chat, *message, &text, &keys)]
+                } else if what == data::SHUT_DOWN_SURE || what == data::RESTART_SURE {
+                    let (power, text) = if what == data::RESTART_SURE {
+                        (Power::Restart, "Restarting the computer...")
+                    } else {
+                        (Power::ShutDown, "Shutting the computer down...")
+                    };
+                    let going = Call::edit(chat, *message, text, &Vec::new());
+                    return Some((vec![done, going], After::Power(power)));
                 } else {
                     let rest = what.strip_prefix(data::BRIGHTNESS)?;
                     let set = rest.strip_prefix(':').and_then(|r| {
@@ -646,7 +713,7 @@ impl Remote {
                 }
             }
         };
-        Some((calls, false))
+        Some((calls, After::Nothing))
     }
 
     /// One update. False once the program is leaving.
@@ -669,13 +736,25 @@ impl Remote {
         if self.telegram.config().chat != Some(update.chat) {
             return true;
         }
-        if let Some((calls, leaving)) = self.own(&update) {
+        if let Some((calls, after)) = self.own(&update) {
+            let chat = update.chat;
             send(calls);
-            if leaving {
-                self.journal.note("Telegram remote: asked to quit");
-                let _ = proxy.send_event(UserEvent::Menu("exit".into()));
+            match after {
+                After::Nothing => {}
+                After::Quit => {
+                    self.journal.note("Telegram remote: asked to quit");
+                    let _ = proxy.send_event(UserEvent::Menu("exit".into()));
+                    return false;
+                }
+                After::Power(what) => {
+                    self.journal
+                        .note(&format!("Telegram remote: asked to {what:?}"));
+                    if !self.desktop.power(what) {
+                        send(say(chat, "The system would not take the request."));
+                    }
+                }
             }
-            return !leaving;
+            return true;
         }
         let (reply, answer) = mpsc::channel();
         if proxy.send_event(UserEvent::Remote(update, reply)).is_err() {
@@ -849,6 +928,8 @@ mod tests {
                 ("\u{2B1C} Walkers", "a::1:walkers"),
                 ("\u{1F512} Minions \u{203A}", "n"),
                 ("Brightness", "b"),
+                ("\u{23FB} Shut down", "s"),
+                ("\u{1F501} Restart", "r"),
                 ("\u{1F504} Refresh", "p:"),
             ]
         );

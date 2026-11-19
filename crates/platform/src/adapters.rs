@@ -3,7 +3,7 @@
 use crate::prelude::*;
 use crate::{backend, BrightnessInfo, Modifier, MonitorWorld, MouseButtons, Screen, SpriteWindow};
 use idlewalker_application::{
-    Desktop, Displays, Journal, Os, ReleaseFeed, RunResult, Updates, WebPost, Workstation,
+    Desktop, Displays, Journal, Os, Power, ReleaseFeed, RunResult, Updates, WebPost, Workstation,
 };
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -47,6 +47,9 @@ impl Desktop for NativeDesktop {
     }
     fn keep_awake(&self, system: bool, display: bool) {
         backend::keep_awake(system, display)
+    }
+    fn power(&self, what: Power) -> bool {
+        backend::power(what == Power::Restart)
     }
     fn is_fullscreen(&self) -> bool {
         backend::is_fullscreen()

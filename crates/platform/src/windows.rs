@@ -492,6 +492,13 @@ pub fn keep_awake(system: bool, display: bool) {
     unsafe { SetThreadExecutionState(wanted) };
 }
 
+/// Shuts the computer down, or restarts it, at once. Not forced: Windows still asks
+/// about unsaved work, as it does from the Start menu.
+pub fn power(restart: bool) -> bool {
+    let what = if restart { "/r" } else { "/s" };
+    super::spawn("shutdown.exe", &[what, "/t", "0"])
+}
+
 /// Seconds since the last input of any kind, as Windows counts it for the screen saver.
 pub fn system_idle_seconds() -> f64 {
     let mut i = LASTINPUTINFO { size: 8, time: 0 };
