@@ -394,7 +394,7 @@ pub fn on_battery() -> bool {
 // ---- Keeping the machine awake -----------------------------------------------------------------
 
 /// `caffeinate` tied to our pid, so it cannot outlive us.
-pub fn keep_awake(on: bool) {
+pub fn keep_awake(system: bool, display: bool) {
     use std::sync::Mutex;
     static CHILD: Mutex<Option<std::process::Child>> = Mutex::new(None);
     let mut child = CHILD.lock().unwrap();
@@ -402,9 +402,11 @@ pub fn keep_awake(on: bool) {
         let _ = c.kill();
         let _ = c.wait();
     }
-    if on {
+    if system || display {
+        // -i holds off idle sleep, -d the display's as well.
+        let what = if display { "-di" } else { "-i" };
         *child = std::process::Command::new("caffeinate")
-            .args(["-d", "-i", "-w", &std::process::id().to_string()])
+            .args([what, "-w", &std::process::id().to_string()])
             .spawn()
             .ok();
     }

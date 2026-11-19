@@ -41,8 +41,9 @@ mod data {
 const NOT_NOW: &str = "Not available while its feature is off.";
 
 /// Commands that switch one thing: the command, the menu id, and what to call it.
-const SWITCHES: [(&str, &str, &str); 9] = [
+const SWITCHES: [(&str, &str, &str); 10] = [
     ("awake", "keep-awake", "Keep system awake"),
+    ("nosleep", "prevent-sleep", "Prevent sleep"),
     ("walkers", "walkers", "Walkers"),
     ("minions", "minions", "Minions"),
     ("birds", "birds", "Angry Birds"),
@@ -212,6 +213,7 @@ fn status(session: &Session) -> String {
         format!("Highlight mouse clicks: {}", on_off(c.click_highlight)),
         format!("Find cursor: {}", on_off(c.find_cursor)),
         format!("Keep system awake: {}", on_off(c.keep_awake)),
+        format!("Prevent sleep: {}", on_off(c.prevent_sleep)),
         format!(
             "{}: {}",
             session.desktop().startup_label(),
@@ -300,10 +302,16 @@ fn switch(session: &mut Session, chat: i64, id: &str, label: &str, arg: &str) ->
     }
     // Asked again, not assumed: the system may have refused.
     let now = find(&menu(session), id, true, "").is_some_and(|(t, _, _)| t);
-    let note = if now == want {
-        ""
-    } else {
+    let c = session.choices();
+    let sleepy = matches!(id, "keep-awake" | "prevent-sleep") && !c.keep_awake && !c.prevent_sleep;
+    let note = if now != want {
         " (the system would not change it)"
+    } else if sleepy {
+        // Fair warning, while it can still be undone.
+        "\n\nNothing holds off sleep now: once the computer sleeps this remote cannot \
+         reach it. /nosleep on keeps it within reach."
+    } else {
+        ""
     };
     say(chat, &format!("{label}: {}{note}", on_off(now)))
 }

@@ -385,7 +385,7 @@ pub fn on_battery() -> bool {
 // ---- Keeping the machine awake ---------------------------------------------------------------
 
 /// A `systemd-inhibit` child holds off idle and sleep, for as long as it lives.
-pub fn keep_awake(on: bool) {
+pub fn keep_awake(system: bool, display: bool) {
     use std::sync::Mutex;
     static CHILD: Mutex<Option<std::process::Child>> = Mutex::new(None);
     let mut child = CHILD.lock().unwrap();
@@ -393,10 +393,16 @@ pub fn keep_awake(on: bool) {
         let _ = c.kill();
         let _ = c.wait();
     }
-    if on {
+    if system || display {
+        // "idle" is what blanks and locks the screen; "sleep" alone leaves that be.
+        let what = if display {
+            "--what=idle:sleep"
+        } else {
+            "--what=sleep"
+        };
         *child = std::process::Command::new("systemd-inhibit")
             .args([
-                "--what=idle:sleep",
+                what,
                 "--who=IdleWalker",
                 "--why=Keep system awake",
                 "--mode=block",

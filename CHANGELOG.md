@@ -8,6 +8,9 @@ Notable changes are recorded here. The format follows
 
 ### Added
 
+- *Prevent sleep* in the menu (`/nosleep` in the Telegram remote): the computer no longer
+  sleeps on its own while the screen may still turn off, so the remote stays within reach
+  and *Keep system awake* can be switched on from afar at any time.
 - Telegram remote: the menu's choices can be made from a phone through a bot of your own,
   with slash commands (`/awake off`, `/walkers on`, `/idle 2m`, `/brightness 40`, ...) and
   with `/menu`, which shows every setting as buttons. Off by default; the first chat to

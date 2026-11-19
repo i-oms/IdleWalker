@@ -335,6 +335,7 @@ pub fn build(c: &Choices, desktop: &dyn Desktop, remote: Option<RemoteState>) ->
             children: find,
         },
         check("keep-awake", "Keep system awake", true, c.keep_awake),
+        check("prevent-sleep", "Prevent sleep", true, c.prevent_sleep),
         check("startup", desktop.startup_label(), true, c.startup),
         item("brains", "Brains..."),
         item("check-update", "Check for updates..."),

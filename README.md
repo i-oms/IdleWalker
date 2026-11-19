@@ -122,6 +122,10 @@ cargo build --release
   were, another takes the prompt out of every shell, and "Uninstall" does both and removes
   Oh My Posh and the font it installed.
 - ☕ **Anti-idle nudge.** Keeps your machine awake when you want it to.
+- 🌙 **Prevent sleep.** A lighter switch: the computer does not fall asleep on its own, but
+  the screen may still turn off and lock. It keeps the machine within reach of the Telegram
+  remote, so *Keep system awake* can be switched on from your phone whenever you need it.
+  Closing the lid, pressing the power button or an empty battery still put it to sleep.
 - 📱 **Telegram remote.** Work the menu from your phone through a bot of your own: `/menu`
   shows every setting as buttons, and commands like `/awake off`, `/walkers on`, `/idle 2m`
   or `/brightness 40` do one thing at once. Off until you set it up: in the menu open

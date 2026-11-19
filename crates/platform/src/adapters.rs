@@ -45,8 +45,8 @@ impl Desktop for NativeDesktop {
     fn nudge_activity(&self) {
         backend::nudge_activity()
     }
-    fn keep_awake(&self, on: bool) {
-        backend::keep_awake(on)
+    fn keep_awake(&self, system: bool, display: bool) {
+        backend::keep_awake(system, display)
     }
     fn is_fullscreen(&self) -> bool {
         backend::is_fullscreen()

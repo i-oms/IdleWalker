@@ -18,10 +18,11 @@ const API: &str = "https://api.telegram.org";
 pub const LONG_POLL_SECONDS: u32 = 25;
 
 /// The slash commands, as Telegram lists them when "/" is typed.
-pub const COMMANDS: [(&str, &str); 20] = [
+pub const COMMANDS: [(&str, &str); 21] = [
     ("menu", "Every setting, as buttons"),
     ("status", "How things stand"),
     ("awake", "Keep system awake: on or off"),
+    ("nosleep", "Prevent sleep: on or off"),
     ("walkers", "The walkers: on or off"),
     ("minions", "The Minions: on or off"),
     ("birds", "The Angry Birds: on or off"),

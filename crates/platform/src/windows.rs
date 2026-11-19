@@ -483,10 +483,13 @@ pub fn on_battery() -> bool {
 
 // ---- Keeping the machine awake -----------------------------------------------------------
 
-/// Stops idle sleep, and with `on` the screen saver and monitor-off, until released.
-/// The request lives on the calling thread, so it must stay alive: the UI thread.
-pub fn keep_awake(on: bool) {
-    unsafe { SetThreadExecutionState(if on { 0x80000003 } else { 0x80000000 }) };
+/// Stops idle sleep with `system`, and with `display` the screen saver and monitor-off
+/// too, until released. The request lives on the calling thread, so it must stay alive:
+/// the UI thread.
+pub fn keep_awake(system: bool, display: bool) {
+    // ES_CONTINUOUS, with ES_SYSTEM_REQUIRED and ES_DISPLAY_REQUIRED as asked.
+    let wanted = 0x80000000 | (system || display) as u32 | (display as u32) << 1;
+    unsafe { SetThreadExecutionState(wanted) };
 }
 
 /// Seconds since the last input of any kind, as Windows counts it for the screen saver.

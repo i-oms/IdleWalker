@@ -85,8 +85,10 @@ pub trait Desktop: Send + Sync {
     fn system_idle_seconds(&self) -> f64;
     /// A harmless input that resets the OS idle clock.
     fn nudge_activity(&self);
-    /// Holds off sleep and the screen saver while on.
-    fn keep_awake(&self, on: bool);
+    /// Holds off idle sleep while `system` is on, and with `display` the screen saver
+    /// and monitor-off too. Sleep the person asks for (the lid, the power button) and a
+    /// battery running out are not held off.
+    fn keep_awake(&self, system: bool, display: bool);
     /// Whether the foreground app covers its whole monitor.
     fn is_fullscreen(&self) -> bool;
     /// What is in front, for the log.
