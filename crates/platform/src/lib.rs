@@ -16,8 +16,8 @@
 mod adapters;
 mod files;
 pub use adapters::{
-    capturable_sprite_factory, sprite_factory, CurlReleaseFeed, NativeDesktop, NativeWorkstation,
-    SystemClock, TempFileJournal,
+    capturable_sprite_factory, sprite_factory, CurlReleaseFeed, CurlWeb, NativeDesktop,
+    NativeWorkstation, SystemClock, TempFileJournal,
 };
 pub use files::{FileBrainStore, FilePreferences};
 pub use idlewalker_application::{BrightnessInfo, Modifier, MouseButtons, Screen};
@@ -253,6 +253,34 @@ pub(crate) fn final_address(url: &str) -> Option<String> {
     let out = output_of("curl", &args)?;
     let last = out.lines().rev().find(|l| !l.trim().is_empty());
     Some(last.unwrap_or("").to_string())
+}
+
+/// Posts JSON with curl and gives back the answer's text, whatever its status. The
+/// address and the body go to curl on its standard input, as a config file, so a secret
+/// in the address never shows in the process list.
+pub(crate) fn post_json(url: &str, body: &str, max_seconds: u32) -> Option<String> {
+    use std::io::Write;
+    use std::process::Stdio;
+    // Inside a config file's quotes only these two need escaping; a body has no raw
+    // line breaks, since JSON escapes its own.
+    let quoted = |s: &str| s.replace('\\', "\\\\").replace('"', "\\\"");
+    let config = format!(
+        "url = \"{}\"\nheader = \"Content-Type: application/json\"\ndata-binary = \"{}\"\n",
+        quoted(url),
+        quoted(body)
+    );
+    let mut c = std::process::Command::new("curl");
+    c.args(["--silent", "--max-time", &max_seconds.to_string()])
+        .args(["--config", "-"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null());
+    hide_console(&mut c);
+    let mut child = c.spawn().ok()?;
+    // Dropped at the end of the statement, which closes it: curl then starts.
+    let written = child.stdin.take()?.write_all(config.as_bytes());
+    let o = child.wait_with_output().ok()?;
+    (written.is_ok() && o.status.success()).then(|| String::from_utf8_lossy(&o.stdout).into_owned())
 }
 
 /// A program on the PATH, as a shell would find it.

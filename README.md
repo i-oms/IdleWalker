@@ -122,6 +122,15 @@ cargo build --release
   were, another takes the prompt out of every shell, and "Uninstall" does both and removes
   Oh My Posh and the font it installed.
 - ☕ **Anti-idle nudge.** Keeps your machine awake when you want it to.
+- 📱 **Telegram remote.** Work the menu from your phone through a bot of your own: `/menu`
+  shows every setting as buttons, and commands like `/awake off`, `/walkers on`, `/idle 2m`
+  or `/brightness 40` do one thing at once. Off until you set it up: in the menu open
+  *Telegram remote > Set up the bot token*, paste the token
+  [@BotFather](https://t.me/BotFather) gives you into the file that opens, and press Start
+  in your bot's chat. The first chat to write to the bot is paired, one to one: from then on
+  only that chat is obeyed, and the program only ever calls out to Telegram, so nothing
+  on your machine listens for connections. It needs `curl`, which Windows, macOS and most
+  Linux systems already have.
 - 🔄 **Update check.** It tells you when there's a new release, but never installs anything on
   its own.
 - 🪶 **Lightweight.** A single native Rust binary with a software renderer, and no Electron or

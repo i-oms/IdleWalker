@@ -211,6 +211,14 @@ pub trait ReleaseFeed: Send + Sync {
     fn download_file_name(&self, version: &str) -> String;
 }
 
+/// A web service that is talked to, not just visited.
+pub trait WebPost: Send + Sync {
+    /// Posts JSON and gives back the answer's text, whatever its status; `None` when the
+    /// service could not be reached within `max_seconds`. The address may hold a secret:
+    /// it must reach neither a command line nor a log. Slow, and needs the network.
+    fn post_json(&self, url: &str, body: &str, max_seconds: u32) -> Option<String>;
+}
+
 // ---- Diagnostics -------------------------------------------------------------------------
 
 /// A human-paced log, so an odd report can be settled by reading it.

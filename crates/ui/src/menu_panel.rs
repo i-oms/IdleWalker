@@ -12,7 +12,7 @@ pub fn closes_menu(id: &str) -> bool {
     // Every "...-custom" opens the colour picker.
     matches!(
         id,
-        "brightness" | "posh" | "brains" | "check-update" | "about" | "exit"
+        "brightness" | "posh" | "brains" | "check-update" | "about" | "exit" | "telegram-setup"
     ) || id.ends_with("-custom")
 }
 

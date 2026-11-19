@@ -127,6 +127,13 @@ impl Preferences {
         false
     );
     switch!(load_find_cursor, save_find_cursor, "FindCursor", false);
+    // Off until asked for: nothing reaches the network unasked.
+    switch!(
+        load_telegram_remote,
+        save_telegram_remote,
+        "TelegramRemote",
+        false
+    );
 
     /// The key that, pressed twice, finds the cursor.
     pub fn load_find_key(&self) -> Modifier {

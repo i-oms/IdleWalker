@@ -5,6 +5,7 @@
 //! StatusNotifierItem D-Bus protocol on Linux. A left-click opens the brightness panel.
 use super::UserEvent;
 use crate::prelude::*;
+use idlewalker_application::telegram::Link;
 pub use idlewalker_application::Choices;
 use idlewalker_application::{Desktop, Indicator, Modifier};
 use winit::event_loop::EventLoopProxy;
@@ -68,7 +69,7 @@ fn is_named_dress(rgb: i32) -> Option<i32> {
     (0..SETTINGS_DRESS_COLORS.len()).find(|&i| SETTINGS_DRESS_COLORS[i] == rgb)
 }
 
-fn describe_dress(rgb: i32) -> String {
+pub(crate) fn describe_dress(rgb: i32) -> String {
     if rgb == Settings::RANDOM_DRESS {
         return "Random".into();
     }
@@ -79,7 +80,7 @@ fn describe_dress(rgb: i32) -> String {
 }
 
 /// The colours offered for the cursor indicators: bright ones, to show on any screen.
-const INDICATOR_COLOURS: [(&str, i32); 9] = [
+pub(crate) const INDICATOR_COLOURS: [(&str, i32); 9] = [
     ("Yellow", 0xFFE100),
     ("Blue", 0x2D7DFF),
     ("Red", 0xFF3B30),
@@ -124,9 +125,36 @@ fn indicator_colour(c: &Choices, which: Indicator, label: &str, enabled: bool) -
     }
 }
 
+/// How the Telegram remote stands, for its group in the menu.
+#[derive(Clone, Copy)]
+pub struct RemoteState {
+    pub enabled: bool,
+    pub link: Link,
+}
+
+/// The Telegram remote's group: its switch, and where the bot's token goes.
+fn remote_group(r: RemoteState) -> Node {
+    let state = match (r.enabled, r.link) {
+        (_, Link::NoToken) => "needs a token",
+        (false, _) => "off",
+        (true, Link::Unpaired) => "message your bot",
+        (true, Link::Paired) => "on",
+    };
+    Node::Sub {
+        label: format!("Telegram remote: {}", state),
+        enabled: true,
+        children: vec![
+            check("telegram", "Enabled", true, r.enabled),
+            Node::Sep,
+            item("telegram-setup", "Set up the bot token..."),
+        ],
+    }
+}
+
 /// The whole menu, as the choices stand. A feature's settings are greyed while it is off;
-/// group headers stay enabled so a group can always be opened.
-pub fn build(c: &Choices, desktop: &dyn Desktop) -> Vec<Node> {
+/// group headers stay enabled so a group can always be opened. Without a `remote` the
+/// Telegram remote's own group is left out: that is the menu the remote itself shows.
+pub fn build(c: &Choices, desktop: &dyn Desktop, remote: Option<RemoteState>) -> Vec<Node> {
     let action_names = desktop.corner_action_names();
     let w = c.walkers;
 
@@ -268,7 +296,7 @@ pub fn build(c: &Choices, desktop: &dyn Desktop) -> Vec<Node> {
         indicator_colour(c, Indicator::RightClick, "Right click", c.click_highlight),
     ];
 
-    vec![
+    let mut nodes = vec![
         check("walkers", "Walkers", true, c.walkers),
         Node::Sub {
             label: format!("Appear after: {}", describe_idle(c.idle_seconds)),
@@ -312,7 +340,13 @@ pub fn build(c: &Choices, desktop: &dyn Desktop) -> Vec<Node> {
         item("check-update", "Check for updates..."),
         item("about", "About"),
         item("exit", "Exit"),
-    ]
+    ];
+    if let Some(r) = remote {
+        // After "start at sign-in", with the other things the program does for itself.
+        let at = nodes.len() - 4;
+        nodes.insert(at, remote_group(r));
+    }
+    nodes
 }
 
 /// The logo at a tray size, as straight-alpha RGBA.

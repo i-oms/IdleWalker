@@ -6,6 +6,14 @@ Notable changes are recorded here. The format follows
 
 ## Unreleased
 
+### Added
+
+- Telegram remote: the menu's choices can be made from a phone through a bot of your own,
+  with slash commands (`/awake off`, `/walkers on`, `/idle 2m`, `/brightness 40`, ...) and
+  with `/menu`, which shows every setting as buttons. Off by default; the first chat to
+  write to the bot is paired, and only that one is obeyed. The terminal prompt and brains windows stay on the
+  computer.
+
 ### Fixed
 
 - Installing the Nerd Font from the terminal prompt window: Oh My Posh versions before 30

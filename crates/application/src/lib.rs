@@ -7,14 +7,16 @@ pub mod ports;
 pub mod posh;
 pub mod preferences;
 pub mod session;
+pub mod telegram;
 pub mod updates;
 
 pub use brains::Brains;
 pub use ports::{
     BrainStore, BrightnessInfo, Desktop, Displays, Journal, Modifier, MouseButtons, Os,
-    PreferenceStore, ReleaseFeed, RunResult, Screen, Workstation,
+    PreferenceStore, ReleaseFeed, RunResult, Screen, WebPost, Workstation,
 };
 pub use posh::Posh;
 pub use preferences::{Indicator, Preferences};
 pub use session::{Choices, CornerFire, Session, SessionPorts, TickReport};
+pub use telegram::Telegram;
 pub use updates::{UpdateState, Updates};

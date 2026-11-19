@@ -3,7 +3,7 @@
 use crate::prelude::*;
 use crate::{backend, BrightnessInfo, Modifier, MonitorWorld, MouseButtons, Screen, SpriteWindow};
 use idlewalker_application::{
-    Desktop, Displays, Journal, Os, ReleaseFeed, RunResult, Updates, Workstation,
+    Desktop, Displays, Journal, Os, ReleaseFeed, RunResult, Updates, WebPost, Workstation,
 };
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -178,6 +178,17 @@ impl ReleaseFeed for CurlReleaseFeed {
         } else {
             format!("idlewalker-{version}-linux-x64.zip")
         }
+    }
+}
+
+// ---- Web services ------------------------------------------------------------------------
+
+/// The web, reached with curl like the releases are.
+pub struct CurlWeb;
+
+impl WebPost for CurlWeb {
+    fn post_json(&self, url: &str, body: &str, max_seconds: u32) -> Option<String> {
+        crate::post_json(url, body, max_seconds)
     }
 }
 
