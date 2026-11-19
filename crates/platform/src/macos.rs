@@ -4,7 +4,7 @@
 //! Retina screen gets full-resolution sprites. AppKit's y axis points up from the
 //! primary display's bottom edge; everything is converted at this boundary.
 #![allow(non_upper_case_globals)]
-use super::{BrightnessInfo, Modifier, MouseButtons, Screen};
+use super::{BrightnessInfo, Modifier, MouseButtons, Screen, Screenshot};
 use crate::prelude::*;
 use objc2::runtime::AnyObject;
 use objc2::{class, msg_send};
@@ -724,6 +724,41 @@ pub fn brightness_write(key: &str, percent: i32) {
     } else if let (Ok(id), Some((_, set))) = (key.parse::<u32>(), display_services()) {
         unsafe { set(id, percent as f32 / 100.0) };
     }
+}
+
+// ---- Screenshots -----------------------------------------------------------------------------------
+
+/// A picture of every display, the main one first, as PNG files in `dir`, taken by the
+/// system's own screencapture. Without the Screen Recording permission macOS gives the
+/// desktop picture alone, with no windows on it.
+pub fn screenshots(dir: &std::path::Path) -> Vec<Screenshot> {
+    use std::io::Read;
+    let mut out = Vec::new();
+    for i in 0..screens().len() {
+        let path = dir.join(format!("screen-{}.png", i + 1));
+        let _ = std::fs::remove_file(&path);
+        // -x: no shutter sound. -D 1 is the main display, 2 the next, and so on.
+        let number = (i + 1).to_string();
+        let args = ["-x", "-t", "png", "-D", &number, &path.to_string_lossy()];
+        if super::output_of("/usr/sbin/screencapture", &args).is_none() {
+            continue;
+        }
+        // A PNG says its size at a fixed place: bytes 16 to 23, big end first.
+        let mut head = [0u8; 24];
+        let read = std::fs::File::open(&path).and_then(|mut f| f.read_exact(&mut head));
+        if read.is_err() {
+            continue;
+        }
+        let size =
+            |at: usize| i32::from_be_bytes([head[at], head[at + 1], head[at + 2], head[at + 3]]);
+        out.push(Screenshot {
+            primary: i == 0,
+            width: size(16),
+            height: size(20),
+            path,
+        });
+    }
+    out
 }
 
 /// Intel Macs reach monitors by another route, which is not implemented: their external

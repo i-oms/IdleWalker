@@ -1,7 +1,9 @@
 //! The OS backends behind the ports. Each implementation only forwards to the backend
 //! compiled for this OS, so the ports stay the one place a capability is described.
 use crate::prelude::*;
-use crate::{backend, BrightnessInfo, Modifier, MonitorWorld, MouseButtons, Screen, SpriteWindow};
+use crate::{
+    backend, BrightnessInfo, Modifier, MonitorWorld, MouseButtons, Screen, Screenshot, SpriteWindow,
+};
 use idlewalker_application::{
     Desktop, Displays, Journal, Os, Power, ReleaseFeed, RunResult, Updates, WebPost, Workstation,
 };
@@ -101,6 +103,9 @@ impl Desktop for NativeDesktop {
     fn brightness_write(&self, key: &str, percent: i32) {
         backend::brightness_write(key, percent)
     }
+    fn screenshots(&self, dir: &Path) -> Vec<Screenshot> {
+        backend::screenshots(dir)
+    }
 }
 
 // ---- The monitors ------------------------------------------------------------------------
@@ -192,6 +197,16 @@ pub struct CurlWeb;
 impl WebPost for CurlWeb {
     fn post_json(&self, url: &str, body: &str, max_seconds: u32) -> Option<String> {
         crate::post_json(url, body, max_seconds)
+    }
+    fn post_file(
+        &self,
+        url: &str,
+        fields: &[(&str, &str)],
+        field: &str,
+        file: &Path,
+        max_seconds: u32,
+    ) -> Option<String> {
+        crate::post_file(url, fields, field, file, max_seconds)
     }
 }
 

@@ -1069,6 +1069,7 @@ dependencies = [
  "libc",
  "objc2 0.6.5",
  "objc2-foundation 0.3.2",
+ "png",
  "x11rb",
 ]
 

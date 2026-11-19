@@ -128,7 +128,8 @@ cargo build --release
   Closing the lid, pressing the power button or an empty battery still put it to sleep.
 - 📱 **Telegram remote.** Work the menu from your phone through a bot of your own: `/menu`
   shows every setting as buttons, and commands like `/awake off`, `/walkers on`, `/idle 2m`
-  or `/brightness 40` do one thing at once. Off until you set it up: in the menu open
+  or `/brightness 40` do one thing at once. `/screenshot` sends a picture of every monitor,
+  the main display first. Off until you set it up: in the menu open
   *Telegram remote > Set up the bot token*, paste the token
   [@BotFather](https://t.me/BotFather) gives you into the file that opens, and press Start
   in your bot's chat. The first chat to write to the bot is paired, one to one: from then on

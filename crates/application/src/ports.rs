@@ -35,6 +35,16 @@ pub struct BrightnessInfo {
     pub key: String,
 }
 
+/// A picture of one monitor, as a PNG file whoever asked for it removes when done.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Screenshot {
+    pub primary: bool,
+    /// In the monitor's own pixels.
+    pub width: i32,
+    pub height: i32,
+    pub path: PathBuf,
+}
+
 /// The two main mouse buttons, as the person's settings name them: on a left-handed
 /// mouse `left` is still the primary button.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -130,6 +140,10 @@ pub trait Desktop: Send + Sync {
     fn brightness_enumerate(&self) -> Vec<BrightnessInfo>;
     /// Slow: off the UI thread.
     fn brightness_write(&self, key: &str, percent: i32);
+
+    /// A picture of every monitor, the primary first, each a PNG file in `dir`. Empty
+    /// when the system will not allow it. Slow: off the UI thread.
+    fn screenshots(&self, dir: &std::path::Path) -> Vec<Screenshot>;
 }
 
 /// The monitor layout. Read once per frame by `refresh`; every query after that is a
@@ -230,6 +244,16 @@ pub trait WebPost: Send + Sync {
     /// service could not be reached within `max_seconds`. The address may hold a secret:
     /// it must reach neither a command line nor a log. Slow, and needs the network.
     fn post_json(&self, url: &str, body: &str, max_seconds: u32) -> Option<String>;
+    /// Posts a file as a form's `field`, beside the form's plain `fields`; the answer and
+    /// the secrecy of the address are as for `post_json`. Slow, and needs the network.
+    fn post_file(
+        &self,
+        url: &str,
+        fields: &[(&str, &str)],
+        field: &str,
+        file: &std::path::Path,
+        max_seconds: u32,
+    ) -> Option<String>;
 }
 
 // ---- Diagnostics -------------------------------------------------------------------------

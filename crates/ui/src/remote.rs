@@ -32,6 +32,8 @@ mod data {
     pub const HINT: &str = "h:";
     /// Alone, the brightness page; "b:<percent>" sets every display.
     pub const BRIGHTNESS: &str = "b";
+    /// A picture of every screen.
+    pub const SCREENSHOT: &str = "c";
     pub const UPDATE: &str = "u";
     pub const ABOUT: &str = "i";
     pub const EXIT: &str = "x";
@@ -174,6 +176,7 @@ fn keyboard(at: &[Node], path: &str, on: bool) -> Keyboard {
     let refresh = Button::new("\u{1F504} Refresh", format!("{}{path}", data::PAGE));
     if path.is_empty() {
         // The computer itself, which the menu on it has no need to offer.
+        keys.push(vec![Button::new("\u{1F4F8} Screenshot", data::SCREENSHOT)]);
         keys.push(vec![
             Button::new("\u{23FB} Shut down", data::SHUT_DOWN),
             Button::new("\u{1F501} Restart", data::RESTART),
@@ -591,6 +594,8 @@ enum After {
     /// IdleWalker quits.
     Quit,
     Power(Power),
+    /// A picture of every screen is taken and sent.
+    Screenshots,
 }
 
 impl Remote {
@@ -651,6 +656,9 @@ impl Remote {
                     }
                     "update" => say(chat, &self.update_report()),
                     "about" => say(chat, &self.about()),
+                    "screenshot" | "screenshots" => {
+                        return Some((Vec::new(), After::Screenshots));
+                    }
                     "exit" => {
                         let (text, keys) = exit_page();
                         vec![Call::send(chat, &text, Some(&keys))]
@@ -677,6 +685,9 @@ impl Remote {
                     vec![done, Call::send(chat, &self.update_report(), None)]
                 } else if what == data::ABOUT {
                     vec![done, Call::send(chat, &self.about(), None)]
+                } else if what == data::SCREENSHOT {
+                    let taking = Call::answer(callback, "Taking the picture...", false);
+                    return Some((vec![taking], After::Screenshots));
                 } else if what == data::EXIT {
                     let (text, keys) = exit_page();
                     vec![done, Call::edit(chat, *message, &text, &keys)]
@@ -702,12 +713,14 @@ impl Remote {
                     let rest = what.strip_prefix(data::BRIGHTNESS)?;
                     // "b:<percent>" is every display; "b:<display>:<percent>" is what
                     // the buttons of an older message still say.
-                    let set = rest.strip_prefix(':').and_then(|r| match r.split_once(':') {
-                        Some((which, percent)) => {
-                            Some((Some(which.parse().ok()?), percent.parse().ok()?))
-                        }
-                        None => Some((None, r.parse().ok()?)),
-                    });
+                    let set = rest
+                        .strip_prefix(':')
+                        .and_then(|r| match r.split_once(':') {
+                            Some((which, percent)) => {
+                                Some((Some(which.parse().ok()?), percent.parse().ok()?))
+                            }
+                            None => Some((None, r.parse().ok()?)),
+                        });
                     if !rest.is_empty() && set.is_none() {
                         return None;
                     }
@@ -754,6 +767,20 @@ impl Remote {
                         .note(&format!("Telegram remote: asked to {what:?}"));
                     if !self.desktop.power(what) {
                         send(say(chat, "The system would not take the request."));
+                    }
+                }
+                After::Screenshots => {
+                    self.journal.note("Telegram remote: asked for a screenshot");
+                    let (taken, arrived) =
+                        self.telegram.send_screenshots(&*self.desktop, token, chat);
+                    if taken == 0 {
+                        send(say(
+                            chat,
+                            "The system would not give a picture of the screen.",
+                        ));
+                    } else if arrived < taken {
+                        let lost = taken - arrived;
+                        send(say(chat, &format!("{lost} of {taken} could not be sent.")));
                     }
                 }
             }
@@ -931,6 +958,7 @@ mod tests {
                 ("\u{2B1C} Walkers", "a::1:walkers"),
                 ("\u{1F512} Minions \u{203A}", "n"),
                 ("Brightness", "b"),
+                ("\u{1F4F8} Screenshot", "c"),
                 ("\u{23FB} Shut down", "s"),
                 ("\u{1F501} Restart", "r"),
                 ("\u{1F504} Refresh", "p:"),

@@ -20,7 +20,7 @@ pub use adapters::{
     NativeWorkstation, SystemClock, TempFileJournal,
 };
 pub use files::{FileBrainStore, FilePreferences};
-pub use idlewalker_application::{BrightnessInfo, Modifier, MouseButtons, Screen};
+pub use idlewalker_application::{BrightnessInfo, Modifier, MouseButtons, Screen, Screenshot};
 
 pub(crate) use idlewalker_domain::rt;
 pub(crate) mod prelude {
@@ -281,6 +281,76 @@ pub(crate) fn post_json(url: &str, body: &str, max_seconds: u32) -> Option<Strin
     let written = child.stdin.take()?.write_all(config.as_bytes());
     let o = child.wait_with_output().ok()?;
     (written.is_ok() && o.status.success()).then(|| String::from_utf8_lossy(&o.stdout).into_owned())
+}
+
+/// Posts a file as a form's `field`, with curl, and gives back the answer's text. The
+/// address goes to curl as for `post_json`. The file is named without its folder, which
+/// curl is started in, so that nothing in the path needs escaping twice over.
+pub(crate) fn post_file(
+    url: &str,
+    fields: &[(&str, &str)],
+    field: &str,
+    file: &std::path::Path,
+    max_seconds: u32,
+) -> Option<String> {
+    use std::io::Write;
+    use std::process::Stdio;
+    let dir = file.parent()?;
+    let name = file.file_name()?.to_str()?;
+    // What curl would read as more than a name.
+    if name.contains(|c: char| ";,\"\\".contains(c) || c.is_control()) {
+        return None;
+    }
+    let quoted = |s: &str| {
+        s.replace('\\', "\\\\")
+            .replace('"', "\\\"")
+            .replace('\n', "\\n")
+            .replace('\r', "")
+    };
+    let mut config = format!("url = \"{}\"\n", quoted(url));
+    for (key, value) in fields {
+        // form-string: a value starting with @ or < is still only text.
+        config.push_str(&format!(
+            "form-string = \"{}\"\n",
+            quoted(&format!("{key}={value}"))
+        ));
+    }
+    config.push_str(&format!(
+        "form = \"{}\"\n",
+        quoted(&format!("{field}=@{name}"))
+    ));
+    let mut c = std::process::Command::new("curl");
+    c.args(["--silent", "--max-time", &max_seconds.to_string()])
+        .args(["--config", "-"])
+        .current_dir(dir)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null());
+    hide_console(&mut c);
+    let mut child = c.spawn().ok()?;
+    let written = child.stdin.take()?.write_all(config.as_bytes());
+    let o = child.wait_with_output().ok()?;
+    (written.is_ok() && o.status.success()).then(|| String::from_utf8_lossy(&o.stdout).into_owned())
+}
+
+/// Writes pixels, three bytes each (red, green, blue) from the top row down, as a PNG.
+#[cfg(not(target_os = "macos"))]
+pub(crate) fn write_png(path: &std::path::Path, width: u32, height: u32, rgb: &[u8]) -> bool {
+    let Ok(file) = std::fs::File::create(path) else {
+        return false;
+    };
+    let mut encoder = png::Encoder::new(std::io::BufWriter::new(file), width, height);
+    encoder.set_color(png::ColorType::Rgb);
+    encoder.set_depth(png::BitDepth::Eight);
+    // A screen is millions of pixels: quick matters more than the last few bytes.
+    encoder.set_compression(png::Compression::Fast);
+    let done = encoder
+        .write_header()
+        .and_then(|mut w| w.write_image_data(rgb).and_then(|_| w.finish()));
+    if done.is_err() {
+        let _ = std::fs::remove_file(path);
+    }
+    done.is_ok()
 }
 
 /// A program on the PATH, as a shell would find it.

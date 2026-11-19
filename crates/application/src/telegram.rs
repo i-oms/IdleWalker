@@ -6,7 +6,7 @@
 //! Only one chat is ever obeyed: the first to write to the bot once its token is set.
 //! The program only ever calls out (long polling), so no port is opened on the machine.
 use crate::jsonc;
-use crate::ports::{WebPost, Workstation};
+use crate::ports::{Desktop, Screenshot, WebPost, Workstation};
 use crate::preferences::Preferences;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -18,7 +18,7 @@ const API: &str = "https://api.telegram.org";
 pub const LONG_POLL_SECONDS: u32 = 25;
 
 /// The slash commands, as Telegram lists them when "/" is typed.
-pub const COMMANDS: [(&str, &str); 23] = [
+pub const COMMANDS: [(&str, &str); 24] = [
     ("menu", "Every setting, as buttons"),
     ("status", "How things stand"),
     ("awake", "Keep system awake: on or off"),
@@ -35,6 +35,7 @@ pub const COMMANDS: [(&str, &str); 23] = [
     ("findcursor", "Find cursor: on or off"),
     ("colour", "left, right or ring, then #RRGGBB"),
     ("brightness", "Screen brightness, like 40"),
+    ("screenshot", "A picture of every screen"),
     ("startup", "Start at sign-in: on or off"),
     ("update", "Check for a newer version"),
     ("about", "Which version is running"),
@@ -160,6 +161,16 @@ impl Call {
                 json(note)
             ),
         }
+    }
+}
+
+/// What is written under a screen's picture: which screen, when there are several.
+fn shot_caption(shot: &Screenshot, number: usize, several: bool) -> String {
+    let size = format!("{} \u{00D7} {}", shot.width, shot.height);
+    match (several, shot.primary) {
+        (false, _) => format!("Screen, {size}"),
+        (true, true) => format!("Display {number} (main), {size}"),
+        (true, false) => format!("Display {number}, {size}"),
     }
 }
 
@@ -393,6 +404,37 @@ impl Telegram {
         self.web.post_json(&url, &call.body, max_seconds)
     }
 
+    /// Takes a picture of every screen and sends each to the chat, as a file so that it
+    /// arrives as sharp as it was taken. How many were taken, and how many of those
+    /// arrived. Slow: off the UI thread.
+    pub fn send_screenshots(
+        &self,
+        desktop: &dyn Desktop,
+        token: &str,
+        chat: i64,
+    ) -> (usize, usize) {
+        let dir = self.ws.temp_dir().join("IdleWalker-screens");
+        if self.ws.make_dir(&dir).is_err() {
+            return (0, 0);
+        }
+        let shots = desktop.screenshots(&dir);
+        let url = format!("{API}/bot{token}/sendDocument");
+        let chat = chat.to_string();
+        let mut arrived = 0;
+        for (i, shot) in shots.iter().enumerate() {
+            let caption = shot_caption(shot, i + 1, shots.len() > 1);
+            let fields = [("chat_id", chat.as_str()), ("caption", caption.as_str())];
+            let answer = self
+                .web
+                .post_file(&url, &fields, "document", &shot.path, 120);
+            let ok = |text: String| jsonc::get_raw(&text, &["ok"]).as_deref() == Some("true");
+            arrived += answer.is_some_and(ok) as usize;
+            // What was on the screen is not left lying about.
+            self.ws.remove_file(&shot.path);
+        }
+        (shots.len(), arrived)
+    }
+
     /// Waits up to `wait` seconds for what was sent to the bot after update `offset`.
     /// An offset of -1 asks for the newest update alone and forgets the ones before it.
     pub fn poll(&self, token: &str, offset: i64, wait: u32) -> Polled {
@@ -535,6 +577,28 @@ mod tests {
             Polled::Refused(why) if why == "Unauthorized"
         ));
         assert!(matches!(parse_poll("<html>"), Polled::Unreachable));
+    }
+
+    #[test]
+    fn a_picture_says_which_screen_it_is_of() {
+        let shot = |primary| Screenshot {
+            primary,
+            width: 1920,
+            height: 1080,
+            path: PathBuf::new(),
+        };
+        assert_eq!(
+            shot_caption(&shot(true), 1, false),
+            "Screen, 1920 \u{00D7} 1080"
+        );
+        assert_eq!(
+            shot_caption(&shot(true), 1, true),
+            "Display 1 (main), 1920 \u{00D7} 1080"
+        );
+        assert_eq!(
+            shot_caption(&shot(false), 2, true),
+            "Display 2, 1920 \u{00D7} 1080"
+        );
     }
 
     #[test]
