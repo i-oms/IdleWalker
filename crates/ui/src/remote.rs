@@ -30,7 +30,7 @@ mod data {
     pub const APPLY: &str = "a:";
     /// "h:<menu id>" explains a choice that needs typing.
     pub const HINT: &str = "h:";
-    /// Alone, the brightness page; "b:<display>:<percent>" sets one.
+    /// Alone, the brightness page; "b:<percent>" sets every display.
     pub const BRIGHTNESS: &str = "b";
     pub const UPDATE: &str = "u";
     pub const ABOUT: &str = "i";
@@ -531,20 +531,19 @@ fn brightness_page(displays: &[BrightnessInfo]) -> (String, Keyboard) {
             "cannot be set from here".into()
         };
         text.push_str(&format!("\n{}. {}{main}: {level}", i + 1, d.name));
-        if d.supported {
-            let button = |percent: i32| {
-                let label = if several {
-                    format!("{} \u{00B7} {percent}", i + 1)
-                } else {
-                    format!("{percent}%")
-                };
-                Button::new(label, format!("{}:{i}:{percent}", data::BRIGHTNESS))
-            };
-            keys.push([0, 25, 50, 75, 100].map(button).to_vec());
-        }
     }
     if displays.is_empty() {
         text.push_str("\nNo display was found.");
+    }
+    // One row for every display at once: they are set together.
+    if displays.iter().any(|d| d.supported) {
+        let button = |percent: i32| {
+            Button::new(
+                format!("{percent}%"),
+                format!("{}:{percent}", data::BRIGHTNESS),
+            )
+        };
+        keys.push([0, 25, 50, 75, 100].map(button).to_vec());
     }
     keys.push(vec![
         Button::new("\u{2039} Menu", data::PAGE),
@@ -701,9 +700,13 @@ impl Remote {
                     return Some((vec![done, going], After::Power(power)));
                 } else {
                     let rest = what.strip_prefix(data::BRIGHTNESS)?;
-                    let set = rest.strip_prefix(':').and_then(|r| {
-                        let (which, percent) = r.split_once(':')?;
-                        Some((Some(which.parse().ok()?), percent.parse().ok()?))
+                    // "b:<percent>" is every display; "b:<display>:<percent>" is what
+                    // the buttons of an older message still say.
+                    let set = rest.strip_prefix(':').and_then(|r| match r.split_once(':') {
+                        Some((which, percent)) => {
+                            Some((Some(which.parse().ok()?), percent.parse().ok()?))
+                        }
+                        None => Some((None, r.parse().ok()?)),
                     });
                     if !rest.is_empty() && set.is_none() {
                         return None;
