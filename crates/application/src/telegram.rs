@@ -18,7 +18,7 @@ const API: &str = "https://api.telegram.org";
 pub const LONG_POLL_SECONDS: u32 = 25;
 
 /// The slash commands, as Telegram lists them when "/" is typed.
-pub const COMMANDS: [(&str, &str); 24] = [
+pub const COMMANDS: [(&str, &str); 29] = [
     ("menu", "Every setting, as buttons"),
     ("status", "How things stand"),
     ("awake", "Keep system awake: on or off"),
@@ -36,6 +36,11 @@ pub const COMMANDS: [(&str, &str); 24] = [
     ("colour", "left, right or ring, then #RRGGBB"),
     ("brightness", "Screen brightness, like 40"),
     ("screenshot", "A picture of every screen"),
+    ("macros", "The recorded mouse macros"),
+    ("run", "Play a macro, like /run macro-1"),
+    ("stop", "Stop the macro being played"),
+    ("rename", "Rename a macro: its name, then the new one"),
+    ("forget", "Delete a macro"),
     ("startup", "Start at sign-in: on or off"),
     ("update", "Check for a newer version"),
     ("about", "Which version is running"),

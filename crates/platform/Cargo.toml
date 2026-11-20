@@ -23,4 +23,4 @@ objc2 = "0.6"
 objc2-foundation = { version = "0.3", features = ["NSGeometry"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
-x11rb = { version = "0.13", features = ["randr", "shape", "xtest", "screensaver"] }
+x11rb = { version = "0.13", features = ["randr", "shape", "xtest", "screensaver", "xinput"] }

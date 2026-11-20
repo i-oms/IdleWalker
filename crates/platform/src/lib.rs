@@ -20,7 +20,9 @@ pub use adapters::{
     NativeWorkstation, SystemClock, TempFileJournal,
 };
 pub use files::{FileBrainStore, FilePreferences};
-pub use idlewalker_application::{BrightnessInfo, Modifier, MouseButtons, Screen, Screenshot};
+pub use idlewalker_application::{
+    BrightnessInfo, Modifier, MouseButtons, MouseKey, PointerAct, PointerEvent, Screen, Screenshot,
+};
 
 pub(crate) use idlewalker_domain::rt;
 pub(crate) mod prelude {

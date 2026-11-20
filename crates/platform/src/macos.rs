@@ -427,6 +427,350 @@ pub fn system_idle_seconds() -> f64 {
 /// `caffeinate -d` already holds off the screen saver and display sleep.
 pub fn nudge_activity() {}
 
+// ---- Mouse macros: an event tap to watch, posted events to play -------------------------------
+
+/// A point as CoreGraphics has it: in points, y down from the top of the primary display.
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct CGPoint {
+    x: f64,
+    y: f64,
+}
+
+type TapCallback = unsafe extern "C" fn(*mut c_void, u32, *mut c_void, *mut c_void) -> *mut c_void;
+
+#[link(name = "CoreGraphics", kind = "framework")]
+extern "C" {
+    fn CGEventTapCreate(
+        tap: u32,
+        place: u32,
+        options: u32,
+        mask: u64,
+        callback: TapCallback,
+        info: *mut c_void,
+    ) -> *mut c_void;
+    fn CGEventTapEnable(tap: *mut c_void, enable: bool);
+    fn CGEventGetLocation(e: *mut c_void) -> CGPoint;
+    fn CGEventGetIntegerValueField(e: *mut c_void, field: u32) -> i64;
+    fn CGEventSetIntegerValueField(e: *mut c_void, field: u32, value: i64);
+    fn CGEventCreateMouseEvent(
+        src: *mut c_void,
+        kind: u32,
+        at: CGPoint,
+        button: u32,
+    ) -> *mut c_void;
+    fn CGEventCreateScrollWheelEvent2(
+        src: *mut c_void,
+        units: u32,
+        wheels: u32,
+        wheel1: i32,
+        wheel2: i32,
+        wheel3: i32,
+    ) -> *mut c_void;
+    fn CGRequestListenEventAccess() -> bool;
+    fn CGRequestPostEventAccess() -> bool;
+}
+#[link(name = "CoreFoundation", kind = "framework")]
+extern "C" {
+    static kCFRunLoopCommonModes: *const c_void;
+    static kCFRunLoopDefaultMode: *const c_void;
+    fn CFMachPortCreateRunLoopSource(
+        alloc: *const c_void,
+        port: *mut c_void,
+        order: isize,
+    ) -> *mut c_void;
+    fn CFRunLoopGetCurrent() -> *mut c_void;
+    fn CFRunLoopAddSource(rl: *mut c_void, source: *mut c_void, mode: *const c_void);
+    fn CFRunLoopRunInMode(mode: *const c_void, seconds: f64, one: u8) -> i32;
+}
+
+// CGEventType, for the mouse.
+const EV_LEFT_DOWN: u32 = 1;
+const EV_LEFT_UP: u32 = 2;
+const EV_RIGHT_DOWN: u32 = 3;
+const EV_RIGHT_UP: u32 = 4;
+const EV_MOVED: u32 = 5;
+const EV_LEFT_DRAGGED: u32 = 6;
+const EV_RIGHT_DRAGGED: u32 = 7;
+const EV_SCROLL: u32 = 22;
+const EV_OTHER_DOWN: u32 = 25;
+const EV_OTHER_UP: u32 = 26;
+const EV_OTHER_DRAGGED: u32 = 27;
+/// The system switched the tap off, for being slow or at the person's word.
+const EV_TAP_DISABLED_BY_TIMEOUT: u32 = 0xFFFF_FFFE;
+// CGEventField.
+const FIELD_CLICK_STATE: u32 = 1;
+const FIELD_BUTTON_NUMBER: u32 = 3;
+const FIELD_SCROLL_LINES: u32 = 11;
+
+/// Moves are noted no closer together than this: a path does not need every report.
+const MOVE_EVERY_MS: u32 = 8;
+/// Where the noting stops, should a recording be left running.
+const MOST_EVENTS: usize = 200_000;
+
+struct Watch {
+    /// Set while watching; the tap's thread stops once it is cleared.
+    on: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+    started: Option<std::time::Instant>,
+    last_move: Option<u32>,
+    /// World pixels per point, read when the watching began.
+    factor: f64,
+    events: Vec<super::PointerEvent>,
+}
+
+static WATCH: std::sync::Mutex<Watch> = std::sync::Mutex::new(Watch {
+    on: None,
+    started: None,
+    last_move: None,
+    factor: 1.0,
+    events: Vec::new(),
+});
+/// The tap, for its own callback to switch back on.
+static TAP: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+fn watch() -> std::sync::MutexGuard<'static, Watch> {
+    WATCH.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// Called by the system for every mouse event of the session. It listens only: the
+/// event goes on as it came.
+unsafe extern "C" fn on_mouse(
+    _proxy: *mut c_void,
+    kind: u32,
+    event: *mut c_void,
+    _info: *mut c_void,
+) -> *mut c_void {
+    use super::{MouseKey, PointerAct};
+    let act = match kind {
+        EV_LEFT_DOWN => PointerAct::Down(MouseKey::Left),
+        EV_LEFT_UP => PointerAct::Up(MouseKey::Left),
+        EV_RIGHT_DOWN => PointerAct::Down(MouseKey::Right),
+        EV_RIGHT_UP => PointerAct::Up(MouseKey::Right),
+        EV_MOVED | EV_LEFT_DRAGGED | EV_RIGHT_DRAGGED | EV_OTHER_DRAGGED => PointerAct::Move,
+        EV_OTHER_DOWN | EV_OTHER_UP => {
+            // Button 2 is the middle one; the ones beyond it have no place in a macro.
+            if CGEventGetIntegerValueField(event, FIELD_BUTTON_NUMBER) != 2 {
+                return event;
+            }
+            if kind == EV_OTHER_DOWN {
+                PointerAct::Down(MouseKey::Middle)
+            } else {
+                PointerAct::Up(MouseKey::Middle)
+            }
+        }
+        EV_SCROLL => {
+            // Whole lines, up being positive: a trackpad's finer scrolling adds up to them.
+            let lines = CGEventGetIntegerValueField(event, FIELD_SCROLL_LINES);
+            if lines == 0 {
+                return event;
+            }
+            PointerAct::Wheel(lines.clamp(-50, 50) as i32 * 120)
+        }
+        EV_TAP_DISABLED_BY_TIMEOUT => {
+            let tap = TAP.load(std::sync::atomic::Ordering::Relaxed);
+            if tap != 0 {
+                CGEventTapEnable(tap as *mut c_void, true);
+            }
+            return event;
+        }
+        _ => return event,
+    };
+    let at = CGEventGetLocation(event);
+    let mut w = watch();
+    let Some(started) = w.started else {
+        return event;
+    };
+    let at_ms = started.elapsed().as_millis() as u32;
+    if act == PointerAct::Move {
+        if w.last_move
+            .is_some_and(|t| at_ms.saturating_sub(t) < MOVE_EVERY_MS)
+        {
+            return event;
+        }
+        w.last_move = Some(at_ms);
+    }
+    if w.events.len() < MOST_EVENTS {
+        let (x, y) = (at.x * w.factor, at.y * w.factor);
+        w.events.push(super::PointerEvent {
+            at_ms,
+            x: x.round() as i32,
+            y: y.round() as i32,
+            act,
+        });
+    }
+    event
+}
+
+/// Starts or stops the tap, which lives on a thread of its own with a run loop to be
+/// called on. The system only allows it once the person has let IdleWalker monitor
+/// input, in Privacy & Security; asking here brings that question up, and so does the
+/// asking for leave to post events, which playing a macro will need.
+pub fn pointer_watch(on: bool) -> bool {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let mut w = watch();
+    if !on {
+        if let Some(flag) = w.on.take() {
+            flag.store(false, Ordering::Relaxed);
+        }
+        w.started = None;
+        return true;
+    }
+    if w.on.is_some() {
+        return true;
+    }
+    unsafe {
+        CGRequestPostEventAccess();
+        if !CGRequestListenEventAccess() {
+            return false;
+        }
+    }
+    let flag = std::sync::Arc::new(AtomicBool::new(true));
+    let theirs = flag.clone();
+    let (tell, told) = std::sync::mpsc::channel();
+    let spawned = std::thread::Builder::new()
+        .name("IdleWalker mouse watch".into())
+        .spawn(move || unsafe {
+            let kinds = [
+                EV_LEFT_DOWN,
+                EV_LEFT_UP,
+                EV_RIGHT_DOWN,
+                EV_RIGHT_UP,
+                EV_MOVED,
+                EV_LEFT_DRAGGED,
+                EV_RIGHT_DRAGGED,
+                EV_SCROLL,
+                EV_OTHER_DOWN,
+                EV_OTHER_UP,
+                EV_OTHER_DRAGGED,
+            ];
+            let mask = kinds.iter().fold(0u64, |m, k| m | 1 << k);
+            // The session's events, ahead of the other taps, listening only.
+            let tap = CGEventTapCreate(1, 0, 1, mask, on_mouse, std::ptr::null_mut());
+            let _ = tell.send(!tap.is_null());
+            if tap.is_null() {
+                return;
+            }
+            let source = CFMachPortCreateRunLoopSource(std::ptr::null(), tap, 0);
+            CFRunLoopAddSource(CFRunLoopGetCurrent(), source, kCFRunLoopCommonModes);
+            CGEventTapEnable(tap, true);
+            TAP.store(tap as usize, Ordering::Relaxed);
+            // In short runs, so that a stop is heard soon.
+            while theirs.load(Ordering::Relaxed) {
+                CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.2, 0);
+            }
+            TAP.store(0, Ordering::Relaxed);
+            CGEventTapEnable(tap, false);
+            CFRelease(source);
+            CFRelease(tap);
+        });
+    if spawned.is_err() || told.recv() != Ok(true) {
+        return false;
+    }
+    w.events.clear();
+    w.last_move = None;
+    w.factor = world_per_point();
+    w.started = Some(std::time::Instant::now());
+    w.on = Some(flag);
+    true
+}
+
+pub fn pointer_watched() -> Vec<super::PointerEvent> {
+    std::mem::take(&mut watch().events)
+}
+
+/// What playing keeps between events: the buttons held, since a move with one held is
+/// a drag to the system, and the last press, since a double click is only one to the
+/// system when its second press says so.
+struct Sent {
+    held: Vec<super::MouseKey>,
+    last_down: Option<(std::time::Instant, super::MouseKey, i32, i32)>,
+    clicks: i64,
+}
+
+static SENT: std::sync::Mutex<Sent> = std::sync::Mutex::new(Sent {
+    held: Vec::new(),
+    last_down: None,
+    clicks: 1,
+});
+
+/// Posts the event as if a mouse had made it. The system only heeds it once the person
+/// has let IdleWalker control the computer, in Privacy & Security, Accessibility.
+pub fn pointer_send(e: &super::PointerEvent) {
+    use super::{MouseKey, PointerAct};
+    let factor = world_per_point();
+    let at = CGPoint {
+        x: e.x as f64 / factor,
+        y: e.y as f64 / factor,
+    };
+    let button = |k: MouseKey| match k {
+        MouseKey::Left => 0,
+        MouseKey::Right => 1,
+        MouseKey::Middle => 2,
+    };
+    let mut sent = SENT.lock().unwrap_or_else(|e| e.into_inner());
+    // A move, as a drag while a button is held.
+    let moved = match sent.held.last() {
+        None => (EV_MOVED, 0),
+        Some(MouseKey::Left) => (EV_LEFT_DRAGGED, 0),
+        Some(MouseKey::Right) => (EV_RIGHT_DRAGGED, 1),
+        Some(MouseKey::Middle) => (EV_OTHER_DRAGGED, 2),
+    };
+    let (kind, number, clicks) = match e.act {
+        PointerAct::Move | PointerAct::Wheel(_) => (moved.0, moved.1, 0),
+        PointerAct::Down(k) => {
+            let now = std::time::Instant::now();
+            let again = sent.last_down.is_some_and(|(at, key, x, y)| {
+                key == k
+                    && now.duration_since(at).as_millis() < 500
+                    && (x - e.x).abs() <= 8
+                    && (y - e.y).abs() <= 8
+            });
+            sent.clicks = if again { sent.clicks + 1 } else { 1 };
+            sent.last_down = Some((now, k, e.x, e.y));
+            sent.held.push(k);
+            let kind = match k {
+                MouseKey::Left => EV_LEFT_DOWN,
+                MouseKey::Right => EV_RIGHT_DOWN,
+                MouseKey::Middle => EV_OTHER_DOWN,
+            };
+            (kind, button(k), sent.clicks)
+        }
+        PointerAct::Up(k) => {
+            sent.held.retain(|h| *h != k);
+            let kind = match k {
+                MouseKey::Left => EV_LEFT_UP,
+                MouseKey::Right => EV_RIGHT_UP,
+                MouseKey::Middle => EV_OTHER_UP,
+            };
+            (kind, button(k), sent.clicks)
+        }
+    };
+    unsafe {
+        let event = CGEventCreateMouseEvent(std::ptr::null_mut(), kind, at, number);
+        if !event.is_null() {
+            if clicks > 0 {
+                CGEventSetIntegerValueField(event, FIELD_CLICK_STATE, clicks);
+            }
+            CGEventPost(0, event);
+            CFRelease(event);
+        }
+        // The wheel turns where the cursor is, which the move above has seen to.
+        if let PointerAct::Wheel(amount) = e.act {
+            let lines = match amount / 120 {
+                0 => amount.signum(),
+                n => n.clamp(-50, 50),
+            };
+            let scroll = CGEventCreateScrollWheelEvent2(std::ptr::null_mut(), 1, 1, lines, 0, 0);
+            if lines != 0 && !scroll.is_null() {
+                CGEventPost(0, scroll);
+            }
+            if !scroll.is_null() {
+                CFRelease(scroll);
+            }
+        }
+    }
+}
+
 // ---- The foreground window ------------------------------------------------------------------
 
 /// True while the active app has taken the screen: the system reports the full-screen
