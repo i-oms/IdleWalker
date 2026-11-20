@@ -538,7 +538,7 @@ fn brightness_page(displays: &[BrightnessInfo]) -> (String, Keyboard) {
     if displays.is_empty() {
         text.push_str("\nNo display was found.");
     }
-    // One row for every display at once: they are set together.
+    // Each preset applies to every supported display.
     if displays.iter().any(|d| d.supported) {
         let button = |percent: i32| {
             Button::new(
@@ -546,7 +546,9 @@ fn brightness_page(displays: &[BrightnessInfo]) -> (String, Keyboard) {
                 format!("{}:{percent}", data::BRIGHTNESS),
             )
         };
-        keys.push([0, 25, 50, 75, 100].map(button).to_vec());
+        keys.push([0, 10, 20, 30].map(button).to_vec());
+        keys.push([40, 50, 60, 70].map(button).to_vec());
+        keys.push([80, 90, 100].map(button).to_vec());
     }
     keys.push(vec![
         Button::new("\u{2039} Menu", data::PAGE),
