@@ -167,6 +167,16 @@ fn macros_group(names: &[String]) -> Node {
     for name in names {
         children.push(item(&format!("macro-play:{name}"), &format!("Play {name}")));
     }
+    if !names.is_empty() {
+        children.push(Node::Sub {
+            label: "Delete a macro...".into(),
+            enabled: true,
+            children: names
+                .iter()
+                .map(|name| item(&format!("macro-delete:{name}"), name))
+                .collect(),
+        });
+    }
     children.push(Node::Sep);
     children.push(item("macro-folder", "Open the folder..."));
     Node::Sub {
@@ -565,3 +575,53 @@ mod backend {
 }
 
 pub use backend::Tray;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_macro_can_be_played_and_deleted_from_the_menu() {
+        let group = macros_group(&["one".into(), "two".into()]);
+        let Node::Sub { children, .. } = group else {
+            panic!("the macros are a group");
+        };
+        let ids: Vec<&str> = children
+            .iter()
+            .filter_map(|n| match n {
+                Node::Item { id, .. } => Some(id.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert!(ids.contains(&"macro-play:one"));
+        assert!(ids.contains(&"macro-play:two"));
+        let delete = children
+            .iter()
+            .find_map(|n| match n {
+                Node::Sub {
+                    label, children, ..
+                } if label == "Delete a macro..." => Some(children),
+                _ => None,
+            })
+            .expect("the delete group is there");
+        let deleted: Vec<&str> = delete
+            .iter()
+            .filter_map(|n| match n {
+                Node::Item { id, .. } => Some(id.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(deleted, ["macro-delete:one", "macro-delete:two"]);
+    }
+
+    #[test]
+    fn nothing_to_delete_is_not_offered() {
+        let group = macros_group(&[]);
+        let Node::Sub { children, .. } = group else {
+            panic!("the macros are a group");
+        };
+        assert!(!children
+            .iter()
+            .any(|n| matches!(n, Node::Sub { label, .. } if label == "Delete a macro...")));
+    }
+}

@@ -24,8 +24,8 @@ pub(crate) mod prelude {
 
 use crate::prelude::*;
 use dialogs::{
-    BrainDialog, BrightnessPanel, ColourDialog, ColourOf, Dialog, Kind, Outcome, TrayPlace,
-    UpdateDialog,
+    BrainDialog, BrightnessPanel, ColourDialog, ColourOf, Dialog, Kind, MacroDeleteDialog,
+    MacroNameDialog, Outcome, TrayPlace, UpdateDialog,
 };
 use gfx::Font;
 use idlewalker_application::{
@@ -72,6 +72,7 @@ pub struct Services {
     pub updates: Updates,
     pub posh: Posh,
     pub telegram: Telegram,
+    pub macros: Macros,
 }
 
 /// Everything the presentation layer is handed by the composition root.
@@ -221,6 +222,7 @@ impl App {
             updates: wiring.updates,
             posh: wiring.posh,
             telegram: wiring.telegram,
+            macros: wiring.macros.clone(),
         };
         App {
             pump: Arc::new(PumpState::default()),
@@ -478,6 +480,9 @@ impl App {
     /// Starts noting what the mouse does, until the tray icon is next clicked.
     fn start_recording(&mut self) {
         if self.macros.start_recording() {
+            // A name still waiting to be typed belongs to an older recording; the mouse
+            // is wanted elsewhere now.
+            self.close_macro_name();
             self.set_tooltip("Idle Walker: recording the mouse. Click here to stop.");
         } else {
             self.session
@@ -488,17 +493,73 @@ impl App {
 
     /// Ends a recording and keeps it; false when none was under way, so the click that
     /// asked is free to do what it usually does. `clicks` is how many it took to ask.
-    fn stop_recording(&mut self, clicks: usize) -> bool {
+    fn stop_recording(&mut self, clicks: usize, el: &ActiveEventLoop) -> bool {
         if !self.macros.recording() {
             return false;
         }
-        let note = match self.macros.stop_recording(clicks) {
-            Some(name) => format!("mouse macro: recorded {name}"),
-            None => "mouse macro: nothing was recorded".into(),
-        };
-        self.session.journal().note(&note);
+        match self.macros.stop_recording(clicks) {
+            Some(name) => {
+                self.session
+                    .journal()
+                    .note(&format!("mouse macro: recorded {name}"));
+                self.open_macro_name(el, &name);
+            }
+            None => {
+                self.session
+                    .journal()
+                    .note("mouse macro: nothing was recorded");
+            }
+        }
         self.set_tooltip("Idle Walker");
         true
+    }
+
+    /// The window where a fresh recording is given a name; it is already kept under
+    /// `saved`, which stays its name when the window is closed without another.
+    fn open_macro_name(&mut self, el: &ActiveEventLoop, saved: &str) {
+        self.close_macro_name();
+        let scale = self.scale_at_cursor();
+        let size = ((460.0 * scale) as u32, (230.0 * scale) as u32);
+        self.open_kind(
+            el,
+            "Name this mouse macro",
+            None,
+            size,
+            Kind::MacroName(MacroNameDialog::new(saved)),
+        );
+    }
+
+    /// Closes the naming window, if one is open; its recording keeps the name it has.
+    fn close_macro_name(&mut self) {
+        let open = self
+            .dialogs
+            .iter()
+            .find(|(_, d)| matches!(d.kind, Kind::MacroName(_)))
+            .map(|(id, _)| *id);
+        if let Some(id) = open {
+            self.close_dialog(id);
+        }
+    }
+
+    /// The window that asks before a macro's file is removed.
+    fn open_macro_delete(&mut self, el: &ActiveEventLoop, name: &str) {
+        let open = self
+            .dialogs
+            .iter()
+            .find(|(_, d)| matches!(d.kind, Kind::MacroDelete(_)))
+            .map(|(id, _)| *id);
+        if let Some(id) = open {
+            self.close_dialog(id);
+        }
+        let scale = self.scale_at_cursor();
+        let size = ((440.0 * scale) as u32, (180.0 * scale) as u32);
+        self.open_kind(
+            el,
+            "Delete mouse macro",
+            None,
+            size,
+            Kind::MacroDelete(MacroDeleteDialog::new(name)),
+        );
     }
 
     /// Plays a macro, once the menu that asked has had a moment to close.
@@ -564,6 +625,8 @@ impl App {
                     let custom = id.strip_suffix("-custom");
                     if let Some(name) = id.strip_prefix("macro-play:") {
                         self.play_macro(name);
+                    } else if let Some(name) = id.strip_prefix("macro-delete:") {
+                        self.open_macro_delete(el, name);
                     } else if let Some(which) =
                         Indicator::ALL.into_iter().find(|i| Some(i.id()) == custom)
                     {
@@ -883,12 +946,12 @@ impl ApplicationHandler<UserEvent> for App {
                 // On Linux the icon's click opens the desktop's own menu, and "Settings"
                 // in it is what arrives here: two clicks, where elsewhere it is one.
                 let clicks = if cfg!(target_os = "linux") { 2 } else { 1 };
-                if id != "menu" || !self.stop_recording(clicks) {
+                if id != "menu" || !self.stop_recording(clicks, el) {
                     self.on_menu(&id, el);
                 }
             }
             UserEvent::TrayLeftClick => {
-                if !self.stop_recording(1) {
+                if !self.stop_recording(1, el) {
                     self.toggle_brightness(el);
                 }
             }
@@ -943,6 +1006,20 @@ impl ApplicationHandler<UserEvent> for App {
                     ColourOf::Dress => self.session.choose_dress(c),
                     ColourOf::Indicator(which) => self.session.choose_indicator_colour(which, c),
                 }
+                self.update_menu();
+            }
+            Outcome::MacroNamed(name) => {
+                self.close_dialog(id);
+                self.session
+                    .journal()
+                    .note(&format!("mouse macro: named {name}"));
+                self.update_menu();
+            }
+            Outcome::MacroDeleted(name) => {
+                self.close_dialog(id);
+                self.session
+                    .journal()
+                    .note(&format!("mouse macro: deleted {name}"));
                 self.update_menu();
             }
         }

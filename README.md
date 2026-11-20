@@ -139,9 +139,10 @@ cargo build --release
 - 🖱️ **Mouse macros.** Record what the mouse does (moves, clicks, the wheel) and play it
   again from the menu or from the Telegram remote: `/macros` lists them as buttons, and a
   picture of the screen follows each one played. *Mouse macros > Record* starts, a click on
-  the tray icon stops. Only the mouse is recorded, never the keyboard. Playing is by
-  position: the same places are clicked, whatever is there by then. Each macro is a small
-  text file you can rename or edit. macOS asks for the Input Monitoring and Accessibility
+  the tray icon stops and asks what to call the macro. Only the mouse is recorded, never
+  the keyboard. Playing is by position: the same places are clicked, whatever is there by
+  then. Each macro is a small text file you can rename or edit, and *Mouse macros > Delete
+  a macro...* removes one. macOS asks for the Input Monitoring and Accessibility
   permissions first; on Linux it needs X11, not Wayland.
 - 🔄 **Update check.** It tells you when there's a new release, but never installs anything on
   its own.

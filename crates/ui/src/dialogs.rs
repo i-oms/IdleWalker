@@ -5,7 +5,8 @@ use super::gfx::{self, button, slider, Canvas, Font, Mouse};
 use super::overlays::DisplayBadges;
 use super::{Services, UserEvent};
 use crate::prelude::*;
-use idlewalker_application::{BrightnessInfo, Desktop, Indicator, Screen, UpdateState};
+use idlewalker_application::macros::Renamed;
+use idlewalker_application::{BrightnessInfo, Desktop, Indicator, Macros, Screen, UpdateState};
 use std::collections::HashMap;
 use std::num::NonZeroU32;
 use std::rc::Rc;
@@ -23,6 +24,10 @@ pub enum Outcome {
     Close,
     /// The colour picker's OK: what was being coloured, and the colour as 0xRRGGBB.
     Colour(ColourOf, i32),
+    /// The naming window's Save: the recording's new name.
+    MacroNamed(String),
+    /// A macro's file was thrown away: its name.
+    MacroDeleted(String),
     Menu(String),
 }
 
@@ -146,6 +151,8 @@ pub enum Kind {
     Brightness(BrightnessPanel),
     Brains(BrainDialog),
     Colour(ColourDialog),
+    MacroDelete(MacroDeleteDialog),
+    MacroName(MacroNameDialog),
     Menu(super::menu_panel::MenuPanel),
     Update(UpdateDialog),
     Posh(Box<super::posh_dialog::PoshDialog>),
@@ -286,20 +293,26 @@ impl Dialog {
                         ..
                     },
                 ..
-            } => {
+            } => match &mut self.kind {
                 // Typing narrows the theme list in the terminal prompt window.
-                let Kind::Posh(p) = &mut self.kind else {
-                    return Outcome::None;
-                };
-                match logical_key {
+                Kind::Posh(p) => match logical_key {
                     Key::Named(NamedKey::Backspace) => {
                         p.filter.pop();
                     }
                     Key::Named(NamedKey::Space) => p.filter.push(' '),
                     Key::Character(t) => p.filter.push_str(t.as_str()),
                     _ => return Outcome::None,
+                },
+                // Typing gives a fresh recording its name; Enter saves it.
+                Kind::MacroName(n) => {
+                    if n.typed(logical_key) {
+                        if let Some(outcome) = n.commit(&self.services.macros) {
+                            return outcome;
+                        }
+                    }
                 }
-            }
+                _ => return Outcome::None,
+            },
             WindowEvent::CursorMoved { position, .. } => {
                 self.mouse.x = position.x as i32;
                 self.mouse.y = position.y as i32;
@@ -352,6 +365,8 @@ impl Dialog {
             Kind::Brightness(p) => p.draw(&mut canvas, font, &mouse, &mut self.drag, scale),
             Kind::Brains(b) => b.draw(&mut canvas, font, &mouse, scale, troupe, &self.services),
             Kind::Colour(c) => c.draw(&mut canvas, font, &mouse, &mut self.drag, scale),
+            Kind::MacroDelete(d) => d.draw(&mut canvas, font, &mouse, scale, &self.services),
+            Kind::MacroName(n) => n.draw(&mut canvas, font, &mouse, scale, &self.services),
             Kind::Menu(p) => p.draw(&mut canvas, font, &mouse, scale),
             Kind::Update(u) => u.draw(&mut canvas, font, &mouse, scale, &self.services),
             Kind::Posh(p) => p.draw(&mut canvas, font, &mouse, scale, &self.services),
@@ -1085,6 +1100,300 @@ impl BrainDialog {
     }
 }
 
+// ---- Naming a fresh mouse macro -------------------------------------------------------------
+
+/// The window that asks what a just-finished recording should be called. The recording is
+/// already kept under `saved`, so closing this window keeps that name and loses nothing.
+pub struct MacroNameDialog {
+    /// The name the recording has now.
+    saved: String,
+    /// The name as typed, which will replace `saved`.
+    name: String,
+    /// The default is picked out, so the first letter typed replaces it.
+    selected: bool,
+    /// Why the last Save did not take; `None` until one is tried.
+    error: Option<String>,
+}
+
+impl MacroNameDialog {
+    pub fn new(saved: &str) -> Self {
+        MacroNameDialog {
+            saved: saved.to_string(),
+            name: saved.to_string(),
+            selected: true,
+            error: None,
+        }
+    }
+
+    /// A key pressed in the window; true for Enter, which asks to save the name.
+    fn typed(&mut self, key: &Key) -> bool {
+        let addition: String = match key {
+            Key::Named(NamedKey::Backspace) => {
+                if self.selected {
+                    self.name.clear();
+                    self.selected = false;
+                } else {
+                    self.name.pop();
+                }
+                self.error = None;
+                return false;
+            }
+            Key::Named(NamedKey::Enter) => return true,
+            Key::Named(NamedKey::Space) => "-".into(),
+            Key::Character(chars) => chars
+                .chars()
+                .map(|c| if c == ' ' { '-' } else { c })
+                .filter(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_')
+                .collect(),
+            _ => return false,
+        };
+        // Spaces become "-", and whatever else a file and a Telegram button cannot hold
+        // is left out as it is typed.
+        if !addition.is_empty() {
+            if self.selected {
+                self.name.clear();
+                self.selected = false;
+            }
+            for c in addition.chars() {
+                if self.name.len() >= 32 {
+                    break;
+                }
+                self.name.push(c);
+            }
+            self.error = None;
+        }
+        false
+    }
+
+    /// Renames the recording as typed. `None` when it could not be, with the reason left
+    /// in the window for the next paint.
+    fn commit(&mut self, macros: &Macros) -> Option<Outcome> {
+        if self.name.is_empty() {
+            self.error = Some("Type a name, or keep the one it has.".into());
+            return None;
+        }
+        if self.name == self.saved {
+            return Some(Outcome::Close);
+        }
+        match macros.rename(&self.saved, &self.name) {
+            Renamed::Done => Some(Outcome::MacroNamed(self.name.clone())),
+            Renamed::Missing => {
+                self.error = Some("The recording is gone.".into());
+                None
+            }
+            Renamed::BadName => {
+                self.error = Some("Use letters, digits, - and _ (32 at most).".into());
+                None
+            }
+            Renamed::Taken => {
+                self.error = Some(format!("Another macro is already called {}.", self.name));
+                None
+            }
+            Renamed::Failed => {
+                self.error = Some("The name could not be saved. The recording is kept.".into());
+                None
+            }
+        }
+    }
+
+    fn draw(
+        &mut self,
+        c: &mut Canvas,
+        f: &mut Font,
+        m: &Mouse,
+        s: f64,
+        services: &Services,
+    ) -> Outcome {
+        c.clear(gfx::BACK);
+        let px = |v: f64| (v * s) as i32;
+        let (title, text, small) = ((18.0 * s) as f32, (13.0 * s) as f32, (12.0 * s) as f32);
+        let left = px(18.0);
+        let width = c.w - 2 * left;
+
+        c.text(
+            f,
+            left,
+            px(14.0),
+            "Name this mouse macro",
+            title,
+            gfx::ACCENT,
+        );
+        let line = format!("It is kept as {} until you give it a name.", self.saved);
+        c.text_fit(f, left, px(44.0), width, &line, text, gfx::WHITE);
+
+        let (field_y, field_h) = (px(74.0), px(34.0));
+        let over = m.inside(left, field_y, width, field_h);
+        if over && m.clicked {
+            self.selected = false;
+        }
+        c.round_box(
+            left,
+            field_y,
+            width,
+            field_h,
+            5.0 * s,
+            gfx::PANEL,
+            if over { gfx::ACCENT } else { gfx::RIM },
+            (1.5 * s).max(1.0),
+        );
+        let (text_x, text_y) = (left + px(10.0), field_y + px(7.0));
+        let shown = f.width(&self.name, text);
+        if self.selected && !self.name.is_empty() {
+            c.rect(
+                text_x - px(2.0),
+                text_y - px(1.0),
+                shown + px(4.0),
+                (text * 1.35) as i32,
+                0xFF2C4A7A,
+            );
+        }
+        c.text(f, text_x, text_y, &self.name, text, gfx::WHITE);
+        if !self.selected {
+            let caret = px(1.0).max(1);
+            c.rect(
+                text_x + shown + px(1.0),
+                text_y,
+                caret,
+                px(17.0),
+                gfx::ACCENT,
+            );
+        }
+
+        c.text_fit(
+            f,
+            left,
+            px(116.0),
+            width,
+            "Letters, digits, - and _ (32 at most); spaces become -.",
+            small,
+            gfx::DIM,
+        );
+        c.text_fit(
+            f,
+            left,
+            px(134.0),
+            width,
+            "Enter saves; Esc keeps the name it has.",
+            small,
+            gfx::DIM,
+        );
+        if let Some(error) = &self.error {
+            c.text_fit(f, left, px(154.0), width, error, text, gfx::ACCENT);
+        }
+
+        let (by, bh) = (c.h - px(46.0), px(30.0));
+        if button(c, f, m, left, by, px(150.0), bh, s, "Delete recording") {
+            if services.macros.delete(&self.saved) {
+                return Outcome::MacroDeleted(self.saved.clone());
+            }
+            self.error = Some("The recording is gone.".into());
+        }
+        let save_w = px(120.0);
+        let save_x = left + width - save_w;
+        if button(c, f, m, save_x, by, save_w, bh, s, "Save name") {
+            if let Some(outcome) = self.commit(&services.macros) {
+                return outcome;
+            }
+        }
+        let keep = format!("Keep {}", self.saved);
+        let keep_w = f.width(&keep, text) + px(28.0);
+        if button(
+            c,
+            f,
+            m,
+            save_x - px(10.0) - keep_w,
+            by,
+            keep_w,
+            bh,
+            s,
+            &keep,
+        ) {
+            return Outcome::Close;
+        }
+        Outcome::None
+    }
+}
+
+// ---- Deleting a mouse macro ------------------------------------------------------------------
+
+/// Asks before a macro is thrown away, since its file cannot be brought back from the menu.
+pub struct MacroDeleteDialog {
+    name: String,
+    error: Option<String>,
+}
+
+impl MacroDeleteDialog {
+    pub fn new(name: &str) -> Self {
+        MacroDeleteDialog {
+            name: name.to_string(),
+            error: None,
+        }
+    }
+
+    fn draw(
+        &mut self,
+        c: &mut Canvas,
+        f: &mut Font,
+        m: &Mouse,
+        s: f64,
+        services: &Services,
+    ) -> Outcome {
+        c.clear(gfx::BACK);
+        let px = |v: f64| (v * s) as i32;
+        let (title, text) = ((18.0 * s) as f32, (13.0 * s) as f32);
+        let left = px(18.0);
+        let width = c.w - 2 * left;
+
+        c.text(
+            f,
+            left,
+            px(14.0),
+            "Delete this mouse macro",
+            title,
+            gfx::ACCENT,
+        );
+        let line = format!("Delete {}?", self.name);
+        c.text_fit(f, left, px(46.0), width, &line, text, gfx::WHITE);
+        c.text_fit(
+            f,
+            left,
+            px(68.0),
+            width,
+            "Its file is removed, and it cannot be played again.",
+            text,
+            gfx::WHITE,
+        );
+        if let Some(error) = &self.error {
+            c.text_fit(f, left, px(96.0), width, error, text, gfx::ACCENT);
+        }
+
+        let (by, bh) = (c.h - px(46.0), px(30.0));
+        let delete_w = px(110.0);
+        let cancel_w = px(90.0);
+        let right = left + width;
+        if button(
+            c,
+            f,
+            m,
+            right - cancel_w - px(10.0) - delete_w,
+            by,
+            delete_w,
+            bh,
+            s,
+            "Delete",
+        ) {
+            if services.macros.delete(&self.name) {
+                return Outcome::MacroDeleted(self.name.clone());
+            }
+            self.error = Some("That macro is gone.".into());
+        }
+        if button(c, f, m, right - cancel_w, by, cancel_w, bh, s, "Cancel") {
+            return Outcome::Close;
+        }
+        Outcome::None
+    }
+}
+
 // ---- The colour picker ------------------------------------------------------------------------
 
 /// A small stand-in for the Windows colour dialog: there is no such thing on every OS.
@@ -1237,5 +1546,37 @@ mod tests {
     fn it_stays_inside_the_screen_sideways() {
         let place = TrayPlace::new(&taskbar_screen(), 1915, 300.0);
         assert_eq!(place.x, 1920 - 8 - 300);
+    }
+
+    #[test]
+    fn a_typed_macro_name_is_safe_for_a_file_and_a_button() {
+        let mut d = MacroNameDialog::new("macro-1");
+        // The default is picked out: the first letter replaces it.
+        assert!(d.selected);
+        assert!(!d.typed(&Key::Character("open".into())));
+        // A space is a key of its own, and becomes "-".
+        assert!(!d.typed(&Key::Named(NamedKey::Space)));
+        assert!(!d.typed(&Key::Character("mail".into())));
+        assert_eq!(d.name, "open-mail");
+        assert!(!d.selected);
+        // Letters a macro cannot have are left out as they are typed.
+        assert!(!d.typed(&Key::Character("é!?".into())));
+        assert_eq!(d.name, "open-mail");
+        assert!(!d.typed(&Key::Named(NamedKey::Backspace)));
+        assert_eq!(d.name, "open-mai");
+        assert!(!d.typed(&Key::Character("_".into())));
+        assert_eq!(d.name, "open-mai_");
+        // A name is 32 at most.
+        assert!(!d.typed(&Key::Character("x".repeat(40).as_str().into())));
+        assert_eq!(d.name.len(), 32);
+        assert!(d.typed(&Key::Named(NamedKey::Enter)));
+    }
+
+    #[test]
+    fn a_selected_default_is_cleared_by_backspace() {
+        let mut d = MacroNameDialog::new("macro-2");
+        assert!(!d.typed(&Key::Named(NamedKey::Backspace)));
+        assert_eq!(d.name, "");
+        assert!(!d.selected);
     }
 }
