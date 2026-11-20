@@ -14,6 +14,8 @@ pub fn closes_menu(id: &str) -> bool {
         id,
         "brightness" | "posh" | "brains" | "check-update" | "about" | "exit" | "telegram-setup"
     ) || id.ends_with("-custom")
+        // Recording, playing and the folder: the mouse is wanted elsewhere.
+        || id.starts_with("macro-")
 }
 
 /// A group's lasting name: "Appear after: 2 seconds" stays open as its value changes.

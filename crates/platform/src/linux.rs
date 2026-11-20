@@ -6,17 +6,22 @@
 //! XWayland: walkers and the brightness panel work, but Wayland does not let any
 //! program read the global cursor, so the position only updates while the pointer is
 //! over an X11 window. See "Platform differences" in the README.
-use super::{BrightnessInfo, Modifier, MouseButtons, Screen, Screenshot};
+use super::{
+    BrightnessInfo, Modifier, MouseButtons, MouseKey, PointerAct, PointerEvent, Screen, Screenshot,
+};
 use crate::prelude::*;
 use crate::rt::{Point, Rectangle};
 use std::ffi::CString;
 use std::path::PathBuf;
-use std::sync::OnceLock;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, OnceLock};
 use x11rb::connection::Connection;
 use x11rb::protocol::randr::ConnectionExt as _;
 use x11rb::protocol::shape::{self, ConnectionExt as _};
+use x11rb::protocol::xinput::{self, ConnectionExt as _};
 use x11rb::protocol::xproto::*;
 use x11rb::protocol::xtest::ConnectionExt as _;
+use x11rb::protocol::Event;
 use x11rb::rust_connection::RustConnection;
 
 struct X {
@@ -419,6 +424,177 @@ pub fn keep_awake(system: bool, display: bool) {
 pub fn power(restart: bool) -> bool {
     let what = if restart { "reboot" } else { "poweroff" };
     super::spawn("systemctl", &[what])
+}
+
+// ---- Mouse macros: XInput2 raw events to watch, XTest to play ---------------------------------
+
+/// Moves are noted no closer together than this: a path does not need every report.
+const MOVE_EVERY_MS: u32 = 8;
+/// Where the noting stops, should a recording be left running.
+const MOST_EVENTS: usize = 200_000;
+
+struct Watch {
+    /// Set while watching; the watching thread stops once it is cleared.
+    on: Option<Arc<AtomicBool>>,
+    events: Vec<PointerEvent>,
+}
+
+static WATCH: Mutex<Watch> = Mutex::new(Watch {
+    on: None,
+    events: Vec::new(),
+});
+
+fn watch() -> std::sync::MutexGuard<'static, Watch> {
+    WATCH.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// Wayland shows a program only what happens over its own windows: a recording there
+/// would have holes, so none is made.
+fn on_wayland() -> bool {
+    std::env::var_os("WAYLAND_DISPLAY").is_some_and(|v| !v.is_empty())
+        || std::env::var("XDG_SESSION_TYPE").is_ok_and(|v| v.eq_ignore_ascii_case("wayland"))
+}
+
+/// Reads the raw mouse events the server sends, on a connection of its own, and notes
+/// each with where the pointer is by then: a raw event says what moved, not where to.
+fn watch_loop(conn: RustConnection, root: Window, on: Arc<AtomicBool>) {
+    let started = std::time::Instant::now();
+    let mut last_move: Option<u32> = None;
+    while on.load(Ordering::Relaxed) {
+        let event = match conn.poll_for_event() {
+            Ok(Some(event)) => event,
+            Ok(None) => {
+                std::thread::sleep(std::time::Duration::from_millis(2));
+                continue;
+            }
+            Err(_) => break,
+        };
+        let key = |button: u32| match button {
+            1 => Some(MouseKey::Left),
+            2 => Some(MouseKey::Middle),
+            3 => Some(MouseKey::Right),
+            _ => None,
+        };
+        let act = match event {
+            Event::XinputRawMotion(_) => Some(PointerAct::Move),
+            // Buttons 4 and 5 are the wheel, a notch a press.
+            Event::XinputRawButtonPress(e) => match e.detail {
+                4 => Some(PointerAct::Wheel(120)),
+                5 => Some(PointerAct::Wheel(-120)),
+                b => key(b).map(PointerAct::Down),
+            },
+            Event::XinputRawButtonRelease(e) => key(e.detail).map(PointerAct::Up),
+            _ => None,
+        };
+        let Some(act) = act else { continue };
+        let at_ms = started.elapsed().as_millis() as u32;
+        if act == PointerAct::Move {
+            if last_move.is_some_and(|t| at_ms - t < MOVE_EVERY_MS) {
+                continue;
+            }
+            last_move = Some(at_ms);
+        }
+        let Some(p) = conn.query_pointer(root).ok().and_then(|c| c.reply().ok()) else {
+            continue;
+        };
+        let mut w = watch();
+        if on.load(Ordering::Relaxed) && w.events.len() < MOST_EVENTS {
+            w.events.push(PointerEvent {
+                at_ms,
+                x: p.root_x as i32,
+                y: p.root_y as i32,
+                act,
+            });
+        }
+    }
+}
+
+pub fn pointer_watch(on: bool) -> bool {
+    let mut w = watch();
+    if !on {
+        if let Some(flag) = w.on.take() {
+            flag.store(false, Ordering::Relaxed);
+        }
+        return true;
+    }
+    if w.on.is_some() {
+        return true;
+    }
+    if on_wayland() {
+        return false;
+    }
+    let Ok((conn, screen)) = RustConnection::connect(None) else {
+        return false;
+    };
+    let root = conn.setup().roots[screen].root;
+    // From 2.1 on, raw events arrive whatever else has grabbed the pointer: a menu, say.
+    let version = conn.xinput_xi_query_version(2, 2);
+    if version.ok().and_then(|c| c.reply().ok()).is_none() {
+        return false;
+    }
+    let mask = xinput::EventMask {
+        deviceid: 1, // every master pointer
+        mask: vec![
+            xinput::XIEventMask::RAW_MOTION
+                | xinput::XIEventMask::RAW_BUTTON_PRESS
+                | xinput::XIEventMask::RAW_BUTTON_RELEASE,
+        ],
+    };
+    let selected = conn.xinput_xi_select_events(root, &[mask]);
+    if selected.ok().and_then(|c| c.check().ok()).is_none() {
+        return false;
+    }
+    let flag = Arc::new(AtomicBool::new(true));
+    let theirs = flag.clone();
+    let spawned = std::thread::Builder::new()
+        .name("IdleWalker mouse watch".into())
+        .spawn(move || watch_loop(conn, root, theirs));
+    if spawned.is_err() {
+        return false;
+    }
+    w.events.clear();
+    w.on = Some(flag);
+    true
+}
+
+pub fn pointer_watched() -> Vec<PointerEvent> {
+    std::mem::take(&mut watch().events)
+}
+
+/// Puts the pointer there, then presses or lets go, as the test extension has the
+/// server believe a mouse did.
+pub fn pointer_send(e: &PointerEvent) {
+    let Some(x) = x() else { return };
+    let fake = |kind: u8, detail: u8, px: i32, py: i32| {
+        let _ = x
+            .conn
+            .xtest_fake_input(kind, detail, 0, x.root, px as i16, py as i16, 0);
+    };
+    let button = |k: MouseKey| match k {
+        MouseKey::Left => 1,
+        MouseKey::Middle => 2,
+        MouseKey::Right => 3,
+    };
+    fake(MOTION_NOTIFY_EVENT, 0, e.x, e.y);
+    match e.act {
+        PointerAct::Move => {}
+        PointerAct::Down(k) => fake(BUTTON_PRESS_EVENT, button(k), 0, 0),
+        PointerAct::Up(k) => fake(BUTTON_RELEASE_EVENT, button(k), 0, 0),
+        PointerAct::Wheel(amount) => {
+            let wheel = if amount > 0 { 4 } else { 5 };
+            // A notch a press; a file mended by hand cannot ask for a thousand.
+            let notches = if amount == 0 {
+                0
+            } else {
+                (amount.unsigned_abs() / 120).clamp(1, 50)
+            };
+            for _ in 0..notches {
+                fake(BUTTON_PRESS_EVENT, wheel, 0, 0);
+                fake(BUTTON_RELEASE_EVENT, wheel, 0, 0);
+            }
+        }
+    }
+    let _ = x.conn.flush();
 }
 
 pub fn system_idle_seconds() -> f64 {

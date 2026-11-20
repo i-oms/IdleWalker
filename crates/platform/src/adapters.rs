@@ -2,7 +2,8 @@
 //! compiled for this OS, so the ports stay the one place a capability is described.
 use crate::prelude::*;
 use crate::{
-    backend, BrightnessInfo, Modifier, MonitorWorld, MouseButtons, Screen, Screenshot, SpriteWindow,
+    backend, BrightnessInfo, Modifier, MonitorWorld, MouseButtons, PointerEvent, Screen,
+    Screenshot, SpriteWindow,
 };
 use idlewalker_application::{
     Desktop, Displays, Journal, Os, Power, ReleaseFeed, RunResult, Updates, WebPost, Workstation,
@@ -105,6 +106,15 @@ impl Desktop for NativeDesktop {
     }
     fn screenshots(&self, dir: &Path) -> Vec<Screenshot> {
         backend::screenshots(dir)
+    }
+    fn pointer_watch(&self, on: bool) -> bool {
+        backend::pointer_watch(on)
+    }
+    fn pointer_watched(&self) -> Vec<PointerEvent> {
+        backend::pointer_watched()
+    }
+    fn pointer_send(&self, event: &PointerEvent) {
+        backend::pointer_send(event)
     }
 }
 

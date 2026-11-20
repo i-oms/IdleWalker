@@ -11,6 +11,11 @@ Notable changes are recorded here. The format follows
 - *Prevent sleep* in the menu (`/nosleep` in the Telegram remote): the computer no longer
   sleeps on its own while the screen may still turn off, so the remote stays within reach
   and *Keep system awake* can be switched on from afar at any time.
+- Mouse macros: when a recording stops, a window on every platform asks what to call it.
+  The next free `macro-N` is filled in already; Enter saves the name typed, and Esc or
+  "Keep ..." leaves that default. The same window can delete the recording, and
+  *Mouse macros > Delete a macro...* removes an existing one, as `/forget` does from the
+  Telegram remote.
 - The Telegram remote can shut the computer down or restart it (`/shutdown`, `/restart`, or
   the buttons under `/menu`), each after asking once.
 - Telegram remote: the menu's choices can be made from a phone through a bot of your own,

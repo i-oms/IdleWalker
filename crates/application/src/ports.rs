@@ -72,6 +72,34 @@ impl Modifier {
     }
 }
 
+/// A mouse button a macro can press, as the system's input names it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MouseKey {
+    Left,
+    Right,
+    Middle,
+}
+
+/// One thing a mouse does.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PointerAct {
+    Move,
+    Down(MouseKey),
+    Up(MouseKey),
+    /// The wheel turned: 120 is one notch away from the person.
+    Wheel(i32),
+}
+
+/// What the mouse did, where, and when: milliseconds since the watching began.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PointerEvent {
+    pub at_ms: u32,
+    /// In world pixels.
+    pub x: i32,
+    pub y: i32,
+    pub act: PointerAct,
+}
+
 /// Ways of turning the computer off.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Power {
@@ -144,6 +172,15 @@ pub trait Desktop: Send + Sync {
     /// A picture of every monitor, the primary first, each a PNG file in `dir`. Empty
     /// when the system will not allow it. Slow: off the UI thread.
     fn screenshots(&self, dir: &std::path::Path) -> Vec<Screenshot>;
+
+    /// Starts noting what the mouse does, wherever it is, or stops. Starting forgets
+    /// what was noted before. False where the system offers no way to watch.
+    fn pointer_watch(&self, on: bool) -> bool;
+    /// What was noted since the watching began, in order; asking takes it away.
+    fn pointer_watched(&self) -> Vec<PointerEvent>;
+    /// Does to the mouse what the event says, as if the person had: the cursor goes
+    /// there, and the button or wheel follows. When it happened is the caller's to keep.
+    fn pointer_send(&self, event: &PointerEvent);
 }
 
 /// The monitor layout. Read once per frame by `refresh`; every query after that is a

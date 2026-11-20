@@ -2,7 +2,9 @@
 //! The same Win32 calls as the C# original's Native.cs, declared by hand so there is
 //! no dependency beyond what ships with Windows.
 #![allow(non_snake_case, non_camel_case_types)]
-use super::{BrightnessInfo, Modifier, MouseButtons, Screen, Screenshot};
+use super::{
+    BrightnessInfo, Modifier, MouseButtons, MouseKey, PointerAct, PointerEvent, Screen, Screenshot,
+};
 use crate::prelude::*;
 use std::collections::HashMap;
 use std::ffi::c_void;
@@ -182,6 +184,35 @@ extern "system" {
     fn GetLastInputInfo(i: *mut LASTINPUTINFO) -> i32;
     fn GetDC(h: HWND) -> isize;
     fn ReleaseDC(h: HWND, dc: isize) -> i32;
+    fn SetCursorPos(x: i32, y: i32) -> i32;
+    fn SetWindowsHookExW(
+        id: i32,
+        hook: unsafe extern "system" fn(i32, usize, isize) -> isize,
+        module: isize,
+        thread: u32,
+    ) -> isize;
+    fn UnhookWindowsHookEx(hook: isize) -> i32;
+    fn CallNextHookEx(hook: isize, code: i32, w: usize, l: isize) -> isize;
+    fn GetMessageW(m: *mut MSG, h: HWND, min: u32, max: u32) -> i32;
+    fn PostThreadMessageW(thread: u32, m: u32, w: usize, l: isize) -> i32;
+}
+#[repr(C)]
+struct MSG {
+    hwnd: HWND,
+    message: u32,
+    w: usize,
+    l: isize,
+    time: u32,
+    pt: POINT,
+}
+/// What a low-level mouse hook is told.
+#[repr(C)]
+struct MSLLHOOKSTRUCT {
+    pt: POINT,
+    data: u32,
+    flags: u32,
+    time: u32,
+    extra: usize,
 }
 #[repr(C)]
 struct WNDCLASSW {
@@ -243,6 +274,8 @@ extern "system" {
     fn OpenProcess(access: u32, inherit: i32, pid: u32) -> HANDLE;
     fn GetCurrentProcess() -> HANDLE;
     fn CloseHandle(h: HANDLE) -> i32;
+    fn GetCurrentThreadId() -> u32;
+    fn GetModuleHandleW(name: *const u16) -> isize;
 }
 #[link(name = "advapi32")]
 extern "system" {
@@ -530,6 +563,146 @@ pub fn nudge_activity() {
         keybd_event(VK_F15, 0, 0, 0);
         keybd_event(VK_F15, 0, KEYUP, 0);
         mouse_event(1, 0, 0, 0, 0);
+    }
+}
+
+// ---- Mouse macros: a low-level hook to watch, injected input to play -------------------
+
+/// Moves are noted no closer together than this: a mouse reports up to a thousand a
+/// second, and a path does not need them all.
+const MOVE_EVERY_MS: u32 = 8;
+/// Where the noting stops, should a recording be left running.
+const MOST_EVENTS: usize = 200_000;
+
+struct Watch {
+    /// The thread the hook lives on, while watching.
+    thread: Option<u32>,
+    /// The tick count when the watching began.
+    started: u32,
+    last_move: u32,
+    events: Vec<PointerEvent>,
+}
+
+static WATCH: Mutex<Watch> = Mutex::new(Watch {
+    thread: None,
+    started: 0,
+    last_move: 0,
+    events: Vec::new(),
+});
+
+fn watch() -> std::sync::MutexGuard<'static, Watch> {
+    WATCH.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// Called by Windows for every mouse event, before any window hears of it. It only
+/// notes and passes on, quickly: the whole system's mouse waits on it.
+unsafe extern "system" fn mouse_hook(code: i32, wp: usize, lp: isize) -> isize {
+    if code >= 0 {
+        let info = &*(lp as *const MSLLHOOKSTRUCT);
+        let act = match wp as u32 {
+            0x200 => Some(PointerAct::Move),
+            0x201 => Some(PointerAct::Down(MouseKey::Left)),
+            0x202 => Some(PointerAct::Up(MouseKey::Left)),
+            0x204 => Some(PointerAct::Down(MouseKey::Right)),
+            0x205 => Some(PointerAct::Up(MouseKey::Right)),
+            0x207 => Some(PointerAct::Down(MouseKey::Middle)),
+            0x208 => Some(PointerAct::Up(MouseKey::Middle)),
+            // The turn is the high half, signed.
+            0x20A => Some(PointerAct::Wheel((info.data >> 16) as i16 as i32)),
+            _ => None,
+        };
+        if let Some(act) = act {
+            let mut w = watch();
+            // An event from just before the start counts as the start.
+            let at_ms = (info.time.wrapping_sub(w.started) as i32).max(0) as u32;
+            let moved = act == PointerAct::Move;
+            let crowded = moved && at_ms.wrapping_sub(w.last_move) < MOVE_EVERY_MS;
+            if w.thread.is_some() && !crowded && w.events.len() < MOST_EVENTS {
+                if moved {
+                    w.last_move = at_ms;
+                }
+                w.events.push(PointerEvent {
+                    at_ms,
+                    x: info.pt.x,
+                    y: info.pt.y,
+                    act,
+                });
+            }
+        }
+    }
+    CallNextHookEx(0, code, wp, lp)
+}
+
+/// Starts or stops the hook. It lives on a thread of its own, which does nothing but
+/// pass its messages on: a hook is called on the thread that set it, and the mouse must
+/// never wait for a busy one.
+pub fn pointer_watch(on: bool) -> bool {
+    const WH_MOUSE_LL: i32 = 14;
+    const WM_QUIT: u32 = 0x12;
+    let mut w = watch();
+    if !on {
+        if let Some(thread) = w.thread.take() {
+            for _ in 0..5 {
+                if unsafe { PostThreadMessageW(thread, WM_QUIT, 0, 0) } != 0 {
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+        }
+        return true;
+    }
+    if w.thread.is_some() {
+        return true;
+    }
+    let (tell, told) = std::sync::mpsc::channel();
+    let spawned = std::thread::Builder::new()
+        .name("IdleWalker mouse watch".into())
+        .spawn(move || unsafe {
+            let module = GetModuleHandleW(std::ptr::null());
+            let hook = SetWindowsHookExW(WH_MOUSE_LL, mouse_hook, module, 0);
+            let _ = tell.send((hook != 0).then(|| GetCurrentThreadId()));
+            if hook == 0 {
+                return;
+            }
+            let mut msg: MSG = std::mem::zeroed();
+            while GetMessageW(&mut msg, 0, 0, 0) > 0 {}
+            UnhookWindowsHookEx(hook);
+        });
+    if spawned.is_err() {
+        return false;
+    }
+    match told.recv() {
+        Ok(Some(thread)) => {
+            w.started = unsafe { GetTickCount() };
+            w.last_move = 0;
+            w.events.clear();
+            w.thread = Some(thread);
+            true
+        }
+        _ => false,
+    }
+}
+
+pub fn pointer_watched() -> Vec<PointerEvent> {
+    std::mem::take(&mut watch().events)
+}
+
+/// Puts the cursor there, then sends the event as input: a move of no distance for a
+/// move, so that whatever is under the cursor hears of it as it would from a mouse.
+pub fn pointer_send(e: &PointerEvent) {
+    let (flags, data) = match e.act {
+        PointerAct::Move => (0x1, 0),
+        PointerAct::Down(MouseKey::Left) => (0x2, 0),
+        PointerAct::Up(MouseKey::Left) => (0x4, 0),
+        PointerAct::Down(MouseKey::Right) => (0x8, 0),
+        PointerAct::Up(MouseKey::Right) => (0x10, 0),
+        PointerAct::Down(MouseKey::Middle) => (0x20, 0),
+        PointerAct::Up(MouseKey::Middle) => (0x40, 0),
+        PointerAct::Wheel(amount) => (0x800, amount as u32),
+    };
+    unsafe {
+        SetCursorPos(e.x, e.y);
+        mouse_event(flags, 0, 0, data, 0);
     }
 }
 

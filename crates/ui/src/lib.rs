@@ -24,12 +24,12 @@ pub(crate) mod prelude {
 
 use crate::prelude::*;
 use dialogs::{
-    BrainDialog, BrightnessPanel, ColourDialog, ColourOf, Dialog, Kind, Outcome, TrayPlace,
-    UpdateDialog,
+    BrainDialog, BrightnessPanel, ColourDialog, ColourOf, Dialog, Kind, MacroDeleteDialog,
+    MacroNameDialog, Outcome, TrayPlace, UpdateDialog,
 };
 use gfx::Font;
 use idlewalker_application::{
-    Brains, BrightnessInfo, Desktop, Indicator, Journal, Posh, Screen, Session, Telegram,
+    Brains, BrightnessInfo, Desktop, Indicator, Journal, Macros, Posh, Screen, Session, Telegram,
     UpdateState, Updates,
 };
 use overlays::{AboutToast, ClickHighlight, CornerRipple, DisplayBadges, FindCursor};
@@ -72,6 +72,7 @@ pub struct Services {
     pub updates: Updates,
     pub posh: Posh,
     pub telegram: Telegram,
+    pub macros: Macros,
 }
 
 /// Everything the presentation layer is handed by the composition root.
@@ -86,6 +87,8 @@ pub struct Wiring {
     pub posh: Posh,
     /// The Telegram remote use case.
     pub telegram: Telegram,
+    /// The mouse macros use case.
+    pub macros: Macros,
     /// Whether the remote may listen to Telegram at all; off for test runs.
     pub listen_to_telegram: bool,
     /// For trouble before the session exists.
@@ -175,6 +178,7 @@ struct App {
     pump: Arc<PumpState>,
     session: Session,
     services: Services,
+    macros: Macros,
     sprites: SpriteFactory,
     pointer_sprites: SpriteFactory,
     on_painter_start: fn(),
@@ -218,11 +222,13 @@ impl App {
             updates: wiring.updates,
             posh: wiring.posh,
             telegram: wiring.telegram,
+            macros: wiring.macros.clone(),
         };
         App {
             pump: Arc::new(PumpState::default()),
             session,
             services,
+            macros: wiring.macros,
             sprites: wiring.sprites,
             pointer_sprites: wiring.pointer_sprites,
             on_painter_start: wiring.on_painter_start,
@@ -455,7 +461,116 @@ impl App {
             enabled: telegram.enabled(),
             link: telegram.link(),
         };
-        tray::build(self.session.choices(), self.desktop(), Some(remote))
+        // Where the mouse cannot be watched there is nothing to offer.
+        let macros = self.macros.supported().then(|| self.macros.list());
+        tray::build(
+            self.session.choices(),
+            self.desktop(),
+            Some(remote),
+            macros.as_deref(),
+        )
+    }
+
+    fn set_tooltip(&self, text: &str) {
+        if let Some(tray) = &self.tray {
+            tray.set_tooltip(text);
+        }
+    }
+
+    /// Starts noting what the mouse does, until the tray icon is next clicked.
+    fn start_recording(&mut self) {
+        if self.macros.start_recording() {
+            // A name still waiting to be typed belongs to an older recording; the mouse
+            // is wanted elsewhere now.
+            self.close_macro_name();
+            self.set_tooltip("Idle Walker: recording the mouse. Click here to stop.");
+        } else {
+            self.session
+                .journal()
+                .note("mouse macro: the recording could not start");
+        }
+    }
+
+    /// Ends a recording and keeps it; false when none was under way, so the click that
+    /// asked is free to do what it usually does. `clicks` is how many it took to ask.
+    fn stop_recording(&mut self, clicks: usize, el: &ActiveEventLoop) -> bool {
+        if !self.macros.recording() {
+            return false;
+        }
+        match self.macros.stop_recording(clicks) {
+            Some(name) => {
+                self.session
+                    .journal()
+                    .note(&format!("mouse macro: recorded {name}"));
+                self.open_macro_name(el, &name);
+            }
+            None => {
+                self.session
+                    .journal()
+                    .note("mouse macro: nothing was recorded");
+            }
+        }
+        self.set_tooltip("Idle Walker");
+        true
+    }
+
+    /// The window where a fresh recording is given a name; it is already kept under
+    /// `saved`, which stays its name when the window is closed without another.
+    fn open_macro_name(&mut self, el: &ActiveEventLoop, saved: &str) {
+        self.close_macro_name();
+        let scale = self.scale_at_cursor();
+        let size = ((460.0 * scale) as u32, (230.0 * scale) as u32);
+        self.open_kind(
+            el,
+            "Name this mouse macro",
+            None,
+            size,
+            Kind::MacroName(MacroNameDialog::new(saved)),
+        );
+    }
+
+    /// Closes the naming window, if one is open; its recording keeps the name it has.
+    fn close_macro_name(&mut self) {
+        let open = self
+            .dialogs
+            .iter()
+            .find(|(_, d)| matches!(d.kind, Kind::MacroName(_)))
+            .map(|(id, _)| *id);
+        if let Some(id) = open {
+            self.close_dialog(id);
+        }
+    }
+
+    /// The window that asks before a macro's file is removed.
+    fn open_macro_delete(&mut self, el: &ActiveEventLoop, name: &str) {
+        let open = self
+            .dialogs
+            .iter()
+            .find(|(_, d)| matches!(d.kind, Kind::MacroDelete(_)))
+            .map(|(id, _)| *id);
+        if let Some(id) = open {
+            self.close_dialog(id);
+        }
+        let scale = self.scale_at_cursor();
+        let size = ((440.0 * scale) as u32, (180.0 * scale) as u32);
+        self.open_kind(
+            el,
+            "Delete mouse macro",
+            None,
+            size,
+            Kind::MacroDelete(MacroDeleteDialog::new(name)),
+        );
+    }
+
+    /// Plays a macro, once the menu that asked has had a moment to close.
+    fn play_macro(&self, name: &str) {
+        let (macros, name) = (self.macros.clone(), name.to_string());
+        let _ = std::thread::Builder::new()
+            .name("IdleWalker mouse macro".into())
+            .spawn(move || {
+                std::thread::sleep(Duration::from_millis(400));
+                macros.play(&name);
+            });
     }
 
     /// Opens the file the bot token goes in, in whatever edits text here, and switches
@@ -501,9 +616,19 @@ impl App {
                     }
                 }
                 "exit" => el.exit(),
+                "macro-record" => self.start_recording(),
+                "macro-folder" => {
+                    let dir = self.macros.folder();
+                    self.desktop().open_url(&dir.display().to_string());
+                }
                 _ => {
                     let custom = id.strip_suffix("-custom");
-                    if let Some(which) = Indicator::ALL.into_iter().find(|i| Some(i.id()) == custom)
+                    if let Some(name) = id.strip_prefix("macro-play:") {
+                        self.play_macro(name);
+                    } else if let Some(name) = id.strip_prefix("macro-delete:") {
+                        self.open_macro_delete(el, name);
+                    } else if let Some(which) =
+                        Indicator::ALL.into_iter().find(|i| Some(i.id()) == custom)
                     {
                         self.open_colour(el, ColourOf::Indicator(which));
                     }
@@ -797,6 +922,7 @@ impl ApplicationHandler<UserEvent> for App {
         if self.listen_to_telegram {
             let worker = remote::Remote {
                 telegram: self.services.telegram.clone(),
+                macros: self.macros.clone(),
                 desktop: self.services.desktop.clone(),
                 updates: self.services.updates.clone(),
                 journal: self.session.journal().clone(),
@@ -815,8 +941,20 @@ impl ApplicationHandler<UserEvent> for App {
                 self.pump.pending.store(false, Ordering::Release);
                 self.on_tick(el);
             }
-            UserEvent::Menu(id) => self.on_menu(&id, el),
-            UserEvent::TrayLeftClick => self.toggle_brightness(el),
+            // While the mouse is being recorded, a click on the tray icon only ends that.
+            UserEvent::Menu(id) => {
+                // On Linux the icon's click opens the desktop's own menu, and "Settings"
+                // in it is what arrives here: two clicks, where elsewhere it is one.
+                let clicks = if cfg!(target_os = "linux") { 2 } else { 1 };
+                if id != "menu" || !self.stop_recording(clicks, el) {
+                    self.on_menu(&id, el);
+                }
+            }
+            UserEvent::TrayLeftClick => {
+                if !self.stop_recording(1, el) {
+                    self.toggle_brightness(el);
+                }
+            }
             UserEvent::Brightness(found) => {
                 for d in self.dialogs.values_mut() {
                     if let Kind::Brightness(p) = &mut d.kind {
@@ -870,10 +1008,26 @@ impl ApplicationHandler<UserEvent> for App {
                 }
                 self.update_menu();
             }
+            Outcome::MacroNamed(name) => {
+                self.close_dialog(id);
+                self.session
+                    .journal()
+                    .note(&format!("mouse macro: named {name}"));
+                self.update_menu();
+            }
+            Outcome::MacroDeleted(name) => {
+                self.close_dialog(id);
+                self.session
+                    .journal()
+                    .note(&format!("mouse macro: deleted {name}"));
+                self.update_menu();
+            }
         }
     }
 
     fn exiting(&mut self, _el: &ActiveEventLoop) {
+        self.macros.abandon_recording();
+        self.macros.stop_playing();
         self.session.shut_down();
         self.pump.stopping.store(true, Ordering::Relaxed);
         self.paint.stop();

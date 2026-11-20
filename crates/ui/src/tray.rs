@@ -151,10 +151,51 @@ fn remote_group(r: RemoteState) -> Node {
     }
 }
 
+/// The mouse macros' group: recording one, and playing those there are.
+fn macros_group(names: &[String]) -> Node {
+    // Any click on the tray icon ends a recording, so this menu is never open during one.
+    // On Linux the icon's click opens the desktop's menu, and "Settings" in it ends it.
+    let record = if cfg!(target_os = "linux") {
+        "Record (to stop: tray icon, then Settings)"
+    } else {
+        "Record (click the tray icon to stop)"
+    };
+    let mut children = vec![item("macro-record", record)];
+    if !names.is_empty() {
+        children.push(Node::Sep);
+    }
+    for name in names {
+        children.push(item(&format!("macro-play:{name}"), &format!("Play {name}")));
+    }
+    if !names.is_empty() {
+        children.push(Node::Sub {
+            label: "Delete a macro...".into(),
+            enabled: true,
+            children: names
+                .iter()
+                .map(|name| item(&format!("macro-delete:{name}"), name))
+                .collect(),
+        });
+    }
+    children.push(Node::Sep);
+    children.push(item("macro-folder", "Open the folder..."));
+    Node::Sub {
+        label: "Mouse macros".into(),
+        enabled: true,
+        children,
+    }
+}
+
 /// The whole menu, as the choices stand. A feature's settings are greyed while it is off;
 /// group headers stay enabled so a group can always be opened. Without a `remote` the
 /// Telegram remote's own group is left out: that is the menu the remote itself shows.
-pub fn build(c: &Choices, desktop: &dyn Desktop, remote: Option<RemoteState>) -> Vec<Node> {
+/// Without `macros` (their names) so is theirs: the remote has its own page for them.
+pub fn build(
+    c: &Choices,
+    desktop: &dyn Desktop,
+    remote: Option<RemoteState>,
+    macros: Option<&[String]>,
+) -> Vec<Node> {
     let action_names = desktop.corner_action_names();
     let w = c.walkers;
 
@@ -342,8 +383,12 @@ pub fn build(c: &Choices, desktop: &dyn Desktop, remote: Option<RemoteState>) ->
         item("about", "About"),
         item("exit", "Exit"),
     ];
+    // After "start at sign-in", with the other things the program does for itself.
+    if let Some(names) = macros {
+        let at = nodes.len() - 4;
+        nodes.insert(at, macros_group(names));
+    }
     if let Some(r) = remote {
-        // After "start at sign-in", with the other things the program does for itself.
         let at = nodes.len() - 4;
         nodes.insert(at, remote_group(r));
     }
@@ -447,6 +492,11 @@ mod backend {
                 .ok()?;
             Some(Tray { _icon: tray })
         }
+
+        /// What hovering over the icon says.
+        pub fn set_tooltip(&self, text: &str) {
+            let _ = self._icon.set_tooltip(Some(text));
+        }
     }
 }
 
@@ -518,7 +568,60 @@ mod backend {
         pub fn new(proxy: EventLoopProxy<UserEvent>) -> Option<Tray> {
             Sni { proxy }.spawn().ok().map(|h| Tray { _handle: h })
         }
+
+        /// The protocol's icon has no tooltip of ours to change.
+        pub fn set_tooltip(&self, _text: &str) {}
     }
 }
 
 pub use backend::Tray;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_macro_can_be_played_and_deleted_from_the_menu() {
+        let group = macros_group(&["one".into(), "two".into()]);
+        let Node::Sub { children, .. } = group else {
+            panic!("the macros are a group");
+        };
+        let ids: Vec<&str> = children
+            .iter()
+            .filter_map(|n| match n {
+                Node::Item { id, .. } => Some(id.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert!(ids.contains(&"macro-play:one"));
+        assert!(ids.contains(&"macro-play:two"));
+        let delete = children
+            .iter()
+            .find_map(|n| match n {
+                Node::Sub {
+                    label, children, ..
+                } if label == "Delete a macro..." => Some(children),
+                _ => None,
+            })
+            .expect("the delete group is there");
+        let deleted: Vec<&str> = delete
+            .iter()
+            .filter_map(|n| match n {
+                Node::Item { id, .. } => Some(id.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(deleted, ["macro-delete:one", "macro-delete:two"]);
+    }
+
+    #[test]
+    fn nothing_to_delete_is_not_offered() {
+        let group = macros_group(&[]);
+        let Node::Sub { children, .. } = group else {
+            panic!("the macros are a group");
+        };
+        assert!(!children
+            .iter()
+            .any(|n| matches!(n, Node::Sub { label, .. } if label == "Delete a macro...")));
+    }
+}

@@ -3,6 +3,7 @@
 //! platform crate and handed in by the composition root.
 pub mod brains;
 pub mod jsonc;
+pub mod macros;
 pub mod ports;
 pub mod posh;
 pub mod preferences;
@@ -11,9 +12,11 @@ pub mod telegram;
 pub mod updates;
 
 pub use brains::Brains;
+pub use macros::Macros;
 pub use ports::{
-    BrainStore, BrightnessInfo, Desktop, Displays, Journal, Modifier, MouseButtons, Os, Power,
-    PreferenceStore, ReleaseFeed, RunResult, Screen, Screenshot, WebPost, Workstation,
+    BrainStore, BrightnessInfo, Desktop, Displays, Journal, Modifier, MouseButtons, MouseKey, Os,
+    PointerAct, PointerEvent, Power, PreferenceStore, ReleaseFeed, RunResult, Screen, Screenshot,
+    WebPost, Workstation,
 };
 pub use posh::Posh;
 pub use preferences::{Indicator, Preferences};

@@ -8,11 +8,13 @@
 use super::UserEvent;
 use crate::prelude::*;
 use crate::tray::{self, Node};
+use idlewalker_application::macros::{Played, Renamed};
 use idlewalker_application::telegram::{
     Button, Call, Keyboard, Link, Polled, Update, What, COMMANDS, LONG_POLL_SECONDS,
 };
 use idlewalker_application::{
-    BrightnessInfo, Desktop, Indicator, Journal, Power, Session, Telegram, UpdateState, Updates,
+    BrightnessInfo, Desktop, Indicator, Journal, Macros, Power, Session, Telegram, UpdateState,
+    Updates,
 };
 use std::sync::mpsc;
 use std::sync::Arc;
@@ -34,6 +36,10 @@ mod data {
     pub const BRIGHTNESS: &str = "b";
     /// A picture of every screen.
     pub const SCREENSHOT: &str = "c";
+    /// Alone, the mouse macros' page; "m:<name>" plays one, and "m!" stops it. A name
+    /// is at most 32 bytes and has neither ":" nor "!".
+    pub const MACROS: &str = "m";
+    pub const MACRO_STOP: &str = "m!";
     pub const UPDATE: &str = "u";
     pub const ABOUT: &str = "i";
     pub const EXIT: &str = "x";
@@ -65,7 +71,7 @@ const SWITCHES: [(&str, &str, &str); 10] = [
 
 /// The menu without the remote's own group: it cannot switch itself off from afar.
 fn menu(session: &Session) -> Vec<Node> {
-    tray::build(session.choices(), &**session.desktop(), None)
+    tray::build(session.choices(), &**session.desktop(), None, None)
 }
 
 /// The group at a path: its title, what is in it, and whether it can be used.
@@ -176,7 +182,10 @@ fn keyboard(at: &[Node], path: &str, on: bool) -> Keyboard {
     let refresh = Button::new("\u{1F504} Refresh", format!("{}{path}", data::PAGE));
     if path.is_empty() {
         // The computer itself, which the menu on it has no need to offer.
-        keys.push(vec![Button::new("\u{1F4F8} Screenshot", data::SCREENSHOT)]);
+        keys.push(vec![
+            Button::new("\u{1F4F8} Screenshot", data::SCREENSHOT),
+            Button::new("\u{1F5B1} Macros", data::MACROS),
+        ]);
         keys.push(vec![
             Button::new("\u{23FB} Shut down", data::SHUT_DOWN),
             Button::new("\u{1F501} Restart", data::RESTART),
@@ -513,6 +522,7 @@ pub fn respond(session: &mut Session, update: &Update) -> Vec<Call> {
 /// What the worker needs.
 pub struct Remote {
     pub telegram: Telegram,
+    pub macros: Macros,
     pub desktop: Arc<dyn Desktop>,
     pub updates: Updates,
     pub journal: Arc<dyn Journal>,
@@ -538,7 +548,7 @@ fn brightness_page(displays: &[BrightnessInfo]) -> (String, Keyboard) {
     if displays.is_empty() {
         text.push_str("\nNo display was found.");
     }
-    // One row for every display at once: they are set together.
+    // Each preset applies to every supported display.
     if displays.iter().any(|d| d.supported) {
         let button = |percent: i32| {
             Button::new(
@@ -546,11 +556,46 @@ fn brightness_page(displays: &[BrightnessInfo]) -> (String, Keyboard) {
                 format!("{}:{percent}", data::BRIGHTNESS),
             )
         };
-        keys.push([0, 25, 50, 75, 100].map(button).to_vec());
+        keys.push([0, 10, 20, 30].map(button).to_vec());
+        keys.push([40, 50, 60, 70].map(button).to_vec());
+        keys.push([80, 90, 100].map(button).to_vec());
     }
     keys.push(vec![
         Button::new("\u{2039} Menu", data::PAGE),
         Button::new("\u{1F504} Refresh", data::BRIGHTNESS),
+    ]);
+    (text, keys)
+}
+
+const NO_MACROS_HERE: &str =
+    "Mouse macros do not work under Wayland: it lets no program watch or work the mouse.";
+
+/// The mouse macros, each a button that plays it.
+fn macros_page(names: &[String], playing: bool) -> (String, Keyboard) {
+    let mut text = String::from("Mouse macros\n\n");
+    text.push_str(if names.is_empty() {
+        "None yet. Record one on the computer: the tray menu, Mouse macros, Record."
+    } else {
+        "Tap one to play it on the computer; a picture of the screen follows. The same \
+         places are clicked as when it was recorded, whatever is there now.\n\n\
+         /rename and /forget take a macro's name."
+    });
+    if playing {
+        text.push_str("\n\nOne is being played now.");
+    }
+    let play = |name: &String| {
+        Button::new(
+            format!("\u{25B6} {name}"),
+            format!("{}:{name}", data::MACROS),
+        )
+    };
+    let mut keys = rows(names.iter().map(play).collect());
+    if playing {
+        keys.push(vec![Button::new("\u{23F9} Stop", data::MACRO_STOP)]);
+    }
+    keys.push(vec![
+        Button::new("\u{2039} Menu", data::PAGE),
+        Button::new("\u{1F504} Refresh", data::MACROS),
     ]);
     (text, keys)
 }
@@ -596,6 +641,8 @@ enum After {
     Power(Power),
     /// A picture of every screen is taken and sent.
     Screenshots,
+    /// A mouse macro is played, and a picture of what came of it sent.
+    Play(String),
 }
 
 impl Remote {
@@ -641,6 +688,83 @@ impl Remote {
         brightness_page(&displays)
     }
 
+    fn macros_page(&self) -> (String, Keyboard) {
+        macros_page(&self.macros.list(), self.macros.playing())
+    }
+
+    fn stop_macro(&self) -> &'static str {
+        if self.macros.stop_playing() {
+            "Stopping the macro."
+        } else {
+            "No macro is being played."
+        }
+    }
+
+    /// A macro command typed in the chat: what to say, and the macro to play if any.
+    fn macro_command(&self, chat: i64, name: &str, arg: &str) -> (Vec<Call>, After) {
+        let mut words = arg.split_whitespace();
+        let (first, second) = (words.next(), words.next());
+        let text = match (name, first, second) {
+            _ if !self.macros.supported() => NO_MACROS_HERE.into(),
+            ("stop", _, _) => self.stop_macro().into(),
+            ("run", Some(which), None) => match self.macros.find(which) {
+                Some(found) => {
+                    let playing = say(chat, &format!("Playing {found}..."));
+                    return (playing, After::Play(found));
+                }
+                None => format!("There is no macro called {which}. /macros lists them."),
+            },
+            ("rename", Some(old), Some(new)) => match self.macros.rename(old, new) {
+                Renamed::Done => format!("{old} is now {new}."),
+                Renamed::Missing => format!("There is no macro called {old}."),
+                Renamed::BadName => {
+                    "A name is letters, digits, - and _, 32 at most, with no spaces.".into()
+                }
+                Renamed::Taken => format!("Another macro is already called {new}."),
+                Renamed::Failed => "The file could not be renamed.".into(),
+            },
+            ("rename", _, _) => "Say which and what: /rename macro-1 open-mail".into(),
+            ("forget", Some(which), None) => {
+                if self.macros.delete(which) {
+                    format!("{which} is forgotten.")
+                } else {
+                    format!("There is no macro called {which}.")
+                }
+            }
+            ("forget", _, _) => "Say which: /forget macro-1".into(),
+            // "/macros", and "/run" without a name.
+            _ => {
+                let (text, keys) = self.macros_page();
+                return (vec![Call::send(chat, &text, Some(&keys))], After::Nothing);
+            }
+        };
+        (say(chat, &text), After::Nothing)
+    }
+
+    /// Plays a macro on a thread of its own, so that the chat is still heard meanwhile
+    /// (a /stop, above all), then says how it went and shows the screen.
+    fn play(&self, token: &str, chat: i64, name: String) {
+        let (telegram, macros) = (self.telegram.clone(), self.macros.clone());
+        let (desktop, token) = (self.desktop.clone(), token.to_string());
+        let _ = std::thread::Builder::new()
+            .name("IdleWalker mouse macro".into())
+            .spawn(move || {
+                let played = macros.play(&name);
+                let text = match played {
+                    Played::Done => format!("{name} was played."),
+                    Played::Stopped => format!("{name} was stopped part-way."),
+                    Played::Missing => format!("{name} is gone, or its file is not a macro."),
+                    Played::Busy => "Not now: a macro is being played or recorded.".into(),
+                };
+                telegram.call(&token, &Call::send(chat, &text, None), 20);
+                if matches!(played, Played::Done | Played::Stopped) {
+                    // A moment for the last click to show on the screen.
+                    std::thread::sleep(Duration::from_millis(800));
+                    telegram.send_screenshots(&*desktop, &token, chat);
+                }
+            });
+    }
+
     /// What the worker answers itself: the slow things, and leaving. `None` for what is
     /// the UI thread's to answer. With it, what to do once it has been said.
     fn own(&self, update: &Update) -> Option<(Vec<Call>, After)> {
@@ -649,6 +773,9 @@ impl Remote {
             What::Text(text) => {
                 let (name, arg) = command(text)?;
                 match name.as_str() {
+                    "macros" | "run" | "stop" | "rename" | "forget" => {
+                        return Some(self.macro_command(chat, &name, arg));
+                    }
                     "brightness" => {
                         let percent = arg.trim_end_matches('%').trim().parse::<i32>().ok();
                         let (text, keys) = self.brightness(percent.map(|p| (None, p)));
@@ -688,6 +815,20 @@ impl Remote {
                 } else if what == data::SCREENSHOT {
                     let taking = Call::answer(callback, "Taking the picture...", false);
                     return Some((vec![taking], After::Screenshots));
+                } else if what == data::MACROS {
+                    let (text, keys) = self.macros_page();
+                    vec![done, Call::edit(chat, *message, &text, &keys)]
+                } else if what == data::MACRO_STOP {
+                    vec![Call::answer(callback, self.stop_macro(), false)]
+                } else if let Some(name) = what.strip_prefix("m:") {
+                    if !self.macros.supported() {
+                        vec![Call::answer(callback, NO_MACROS_HERE, true)]
+                    } else if self.macros.find(name).is_none() {
+                        vec![Call::answer(callback, "That macro is gone.", true)]
+                    } else {
+                        let playing = Call::answer(callback, &format!("Playing {name}..."), false);
+                        return Some((vec![playing], After::Play(name.to_string())));
+                    }
                 } else if what == data::EXIT {
                     let (text, keys) = exit_page();
                     vec![done, Call::edit(chat, *message, &text, &keys)]
@@ -782,6 +923,11 @@ impl Remote {
                         let lost = taken - arrived;
                         send(say(chat, &format!("{lost} of {taken} could not be sent.")));
                     }
+                }
+                After::Play(name) => {
+                    self.journal
+                        .note(&format!("Telegram remote: asked to play {name}"));
+                    self.play(token, chat, name);
                 }
             }
             return true;
@@ -959,6 +1105,7 @@ mod tests {
                 ("\u{1F512} Minions \u{203A}", "n"),
                 ("Brightness", "b"),
                 ("\u{1F4F8} Screenshot", "c"),
+                ("\u{1F5B1} Macros", "m"),
                 ("\u{23FB} Shut down", "s"),
                 ("\u{1F501} Restart", "r"),
                 ("\u{1F504} Refresh", "p:"),
