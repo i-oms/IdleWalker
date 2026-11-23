@@ -496,8 +496,10 @@ const EV_SCROLL: u32 = 22;
 const EV_OTHER_DOWN: u32 = 25;
 const EV_OTHER_UP: u32 = 26;
 const EV_OTHER_DRAGGED: u32 = 27;
-/// The system switched the tap off, for being slow or at the person's word.
+/// The system switched the tap off, for being slow or at the person's word. Either way
+/// it stays off, and the recording deaf, until switched back on.
 const EV_TAP_DISABLED_BY_TIMEOUT: u32 = 0xFFFF_FFFE;
+const EV_TAP_DISABLED_BY_USER_INPUT: u32 = 0xFFFF_FFFF;
 // CGEventField.
 const FIELD_CLICK_STATE: u32 = 1;
 const FIELD_BUTTON_NUMBER: u32 = 3;
@@ -505,8 +507,10 @@ const FIELD_SCROLL_LINES: u32 = 11;
 
 /// Moves are noted no closer together than this: a path does not need every report.
 const MOVE_EVERY_MS: u32 = 8;
-/// Where the noting stops, should a recording be left running.
+/// Where the noting of moves stops, should a recording be left running; clicks and the
+/// wheel go on being noted a good while after, so a long recording keeps what matters.
 const MOST_EVENTS: usize = 200_000;
+const MOST_EVENTS_AT_ALL: usize = 300_000;
 
 struct Watch {
     /// Set while watching; the tap's thread stops once it is cleared.
@@ -566,7 +570,7 @@ unsafe extern "C" fn on_mouse(
             }
             PointerAct::Wheel(lines.clamp(-50, 50) as i32 * 120)
         }
-        EV_TAP_DISABLED_BY_TIMEOUT => {
+        EV_TAP_DISABLED_BY_TIMEOUT | EV_TAP_DISABLED_BY_USER_INPUT => {
             let tap = TAP.load(std::sync::atomic::Ordering::Relaxed);
             if tap != 0 {
                 CGEventTapEnable(tap as *mut c_void, true);
@@ -589,7 +593,12 @@ unsafe extern "C" fn on_mouse(
         }
         w.last_move = Some(at_ms);
     }
-    if w.events.len() < MOST_EVENTS {
+    let most = if act == PointerAct::Move {
+        MOST_EVENTS
+    } else {
+        MOST_EVENTS_AT_ALL
+    };
+    if w.events.len() < most {
         let (x, y) = (at.x * w.factor, at.y * w.factor);
         w.events.push(super::PointerEvent {
             at_ms,
@@ -607,12 +616,14 @@ unsafe extern "C" fn on_mouse(
 /// asking for leave to post events, which playing a macro will need.
 pub fn pointer_watch(on: bool) -> bool {
     use std::sync::atomic::{AtomicBool, Ordering};
+    static NAP: std::sync::Mutex<usize> = std::sync::Mutex::new(0);
     let mut w = watch();
     if !on {
         if let Some(flag) = w.on.take() {
             flag.store(false, Ordering::Relaxed);
         }
         w.started = None;
+        hold_off_app_nap(&NAP, false, c"Recording a mouse macro");
         return true;
     }
     if w.on.is_some() {
@@ -671,7 +682,35 @@ pub fn pointer_watch(on: bool) -> bool {
     w.factor = world_per_point();
     w.started = Some(std::time::Instant::now());
     w.on = Some(flag);
+    hold_off_app_nap(&NAP, true, c"Recording a mouse macro");
     true
+}
+
+/// App Nap slows a program nobody is looking at, once the person has been away a
+/// while: the tap's thread is then too late to answer, and the system switches the tap
+/// off; the steps of a macro being played lag behind. An activity of the program's
+/// own, kept in `slot` until let go, holds it off.
+fn hold_off_app_nap(slot: &std::sync::Mutex<usize>, on: bool, reason: &std::ffi::CStr) {
+    // NSActivityUserInitiated | NSActivityLatencyCritical.
+    const OPTIONS: u64 = 0x00FF_FFFF | 0xFF_0000_0000;
+    let mut token = slot.lock().unwrap_or_else(|e| e.into_inner());
+    objc2::rc::autoreleasepool(|_| unsafe {
+        let info: Id = msg_send![class!(NSProcessInfo), processInfo];
+        if *token != 0 {
+            let old = *token as Id;
+            let _: () = msg_send![info, endActivity: old];
+            let _: () = msg_send![old, release];
+            *token = 0;
+        }
+        if on {
+            let why: Id = msg_send![class!(NSString), stringWithUTF8String: reason.as_ptr()];
+            let new: Id = msg_send![info, beginActivityWithOptions: OPTIONS, reason: why];
+            if !new.is_null() {
+                let _: Id = msg_send![new, retain];
+                *token = new as usize;
+            }
+        }
+    });
 }
 
 pub fn pointer_watched() -> Vec<super::PointerEvent> {
@@ -768,6 +807,74 @@ pub fn pointer_send(e: &super::PointerEvent) {
                 CFRelease(scroll);
             }
         }
+    }
+}
+
+/// Wakes the screen for a macro and holds it awake, with `caffeinate`s of its own so
+/// that letting go leaves "keep awake" as it was. `-u` declares the user active, which
+/// turns a sleeping display on and ends the screen saver; it lapses by itself.
+pub fn hold_screen_for_input(on: bool) {
+    use std::sync::Mutex;
+    static HOLD: Mutex<Option<std::process::Child>> = Mutex::new(None);
+    let mut hold = HOLD.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(mut c) = hold.take() {
+        let _ = c.kill();
+        let _ = c.wait();
+    }
+    static NAP: Mutex<usize> = Mutex::new(0);
+    hold_off_app_nap(&NAP, on, c"Playing a mouse macro");
+    if !on {
+        return;
+    }
+    let pid = std::process::id().to_string();
+    let _ = super::spawn("caffeinate", &["-u", "-t", "5"]);
+    *hold = std::process::Command::new("caffeinate")
+        .args(["-dim", "-w", &pid])
+        .spawn()
+        .ok();
+}
+
+/// The session's own word: "CGSSessionScreenIsLocked" is in its dictionary, and true,
+/// only while the lock screen is up.
+pub fn screen_locked() -> bool {
+    use std::ffi::c_char;
+    #[link(name = "CoreGraphics", kind = "framework")]
+    extern "C" {
+        fn CGSessionCopyCurrentDictionary() -> *const c_void;
+    }
+    #[link(name = "CoreFoundation", kind = "framework")]
+    extern "C" {
+        fn CFRelease(o: *const c_void);
+        fn CFStringCreateWithCString(
+            allocator: *const c_void,
+            text: *const c_char,
+            encoding: u32,
+        ) -> *const c_void;
+        fn CFDictionaryGetValue(d: *const c_void, key: *const c_void) -> *const c_void;
+        fn CFGetTypeID(o: *const c_void) -> usize;
+        fn CFBooleanGetTypeID() -> usize;
+        fn CFBooleanGetValue(b: *const c_void) -> u8;
+    }
+    unsafe {
+        let session = CGSessionCopyCurrentDictionary();
+        if session.is_null() {
+            return false;
+        }
+        let key = CFStringCreateWithCString(
+            std::ptr::null(),
+            c"CGSSessionScreenIsLocked".as_ptr(),
+            0x0800_0100,
+        );
+        let mut locked = false;
+        if !key.is_null() {
+            let value = CFDictionaryGetValue(session, key);
+            locked = !value.is_null()
+                && CFGetTypeID(value) == CFBooleanGetTypeID()
+                && CFBooleanGetValue(value) != 0;
+            CFRelease(key);
+        }
+        CFRelease(session);
+        locked
     }
 }
 

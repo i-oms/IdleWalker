@@ -195,6 +195,17 @@ extern "system" {
     fn CallNextHookEx(hook: isize, code: i32, w: usize, l: isize) -> isize;
     fn GetMessageW(m: *mut MSG, h: HWND, min: u32, max: u32) -> i32;
     fn PostThreadMessageW(thread: u32, m: u32, w: usize, l: isize) -> i32;
+    fn SetTimer(h: HWND, id: usize, ms: u32, proc_: *const c_void) -> usize;
+    fn KillTimer(h: HWND, id: usize) -> i32;
+    fn OpenInputDesktop(flags: u32, inherit: i32, access: u32) -> isize;
+    fn CloseDesktop(desk: isize) -> i32;
+    fn GetUserObjectInformationW(
+        obj: isize,
+        index: i32,
+        info: *mut c_void,
+        len: u32,
+        needed: *mut u32,
+    ) -> i32;
 }
 #[repr(C)]
 struct MSG {
@@ -270,6 +281,7 @@ extern "system" {
     fn GetSystemPowerStatus(p: *mut POWER) -> i32;
     fn GetCurrentThread() -> HANDLE;
     fn SetThreadPriority(t: HANDLE, p: i32) -> i32;
+    fn SetThreadInformation(t: HANDLE, class: i32, info: *const c_void, size: u32) -> i32;
     fn GetTickCount() -> u32;
     fn OpenProcess(access: u32, inherit: i32, pid: u32) -> HANDLE;
     fn GetCurrentProcess() -> HANDLE;
@@ -571,8 +583,24 @@ pub fn nudge_activity() {
 /// Moves are noted no closer together than this: a mouse reports up to a thousand a
 /// second, and a path does not need them all.
 const MOVE_EVERY_MS: u32 = 8;
-/// Where the noting stops, should a recording be left running.
+/// Where the noting of moves stops, should a recording be left running; clicks and the
+/// wheel go on being noted a good while after, so a long recording keeps what matters.
 const MOST_EVENTS: usize = 200_000;
+const MOST_EVENTS_AT_ALL: usize = 300_000;
+/// How often the hook's thread checks that Windows has not taken the hook away.
+const HOOK_CHECK_MS: u32 = 1000;
+
+/// Every call of the hook, noted or not: the watchdog's sign that it is still there.
+static HOOK_CALLS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+/// Whether a recording that saw this many events may note one more of this kind.
+fn room_for(len: usize, moved: bool) -> bool {
+    len < if moved {
+        MOST_EVENTS
+    } else {
+        MOST_EVENTS_AT_ALL
+    }
+}
 
 struct Watch {
     /// The thread the hook lives on, while watching.
@@ -598,6 +626,7 @@ fn watch() -> std::sync::MutexGuard<'static, Watch> {
 /// notes and passes on, quickly: the whole system's mouse waits on it.
 unsafe extern "system" fn mouse_hook(code: i32, wp: usize, lp: isize) -> isize {
     if code >= 0 {
+        HOOK_CALLS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let info = &*(lp as *const MSLLHOOKSTRUCT);
         let act = match wp as u32 {
             0x200 => Some(PointerAct::Move),
@@ -617,7 +646,7 @@ unsafe extern "system" fn mouse_hook(code: i32, wp: usize, lp: isize) -> isize {
             let at_ms = (info.time.wrapping_sub(w.started) as i32).max(0) as u32;
             let moved = act == PointerAct::Move;
             let crowded = moved && at_ms.wrapping_sub(w.last_move) < MOVE_EVERY_MS;
-            if w.thread.is_some() && !crowded && w.events.len() < MOST_EVENTS {
+            if w.thread.is_some() && !crowded && room_for(w.events.len(), moved) {
                 if moved {
                     w.last_move = at_ms;
                 }
@@ -658,14 +687,45 @@ pub fn pointer_watch(on: bool) -> bool {
     let spawned = std::thread::Builder::new()
         .name("IdleWalker mouse watch".into())
         .spawn(move || unsafe {
+            const WM_TIMER: u32 = 0x113;
+            // Windows takes a low-level hook away, without a word, once it is too slow
+            // to answer: a thread starved by a busy machine, or slowed by the power
+            // throttling a background program gets after a while idle. So this one
+            // asks for the time it needs, and keeps out of the throttling.
+            SetThreadPriority(GetCurrentThread(), 15); // THREAD_PRIORITY_TIME_CRITICAL
+            unthrottle_this_thread();
             let module = GetModuleHandleW(std::ptr::null());
-            let hook = SetWindowsHookExW(WH_MOUSE_LL, mouse_hook, module, 0);
+            let mut hook = SetWindowsHookExW(WH_MOUSE_LL, mouse_hook, module, 0);
             let _ = tell.send((hook != 0).then(|| GetCurrentThreadId()));
             if hook == 0 {
                 return;
             }
+            // Should it be taken away all the same, the cursor moving with nothing
+            // heard of it shows so, and the hook is set again.
+            let timer = SetTimer(0, 0, HOOK_CHECK_MS, std::ptr::null());
+            let mut calls = HOOK_CALLS.load(std::sync::atomic::Ordering::Relaxed);
+            let mut seen = cursor_pos();
             let mut msg: MSG = std::mem::zeroed();
-            while GetMessageW(&mut msg, 0, 0, 0) > 0 {}
+            while GetMessageW(&mut msg, 0, 0, 0) > 0 {
+                if msg.message != WM_TIMER {
+                    continue;
+                }
+                let now_calls = HOOK_CALLS.load(std::sync::atomic::Ordering::Relaxed);
+                let now_seen = cursor_pos();
+                let moved = now_seen.is_some() && seen.is_some() && now_seen != seen;
+                if moved && now_calls == calls {
+                    UnhookWindowsHookEx(hook);
+                    let again = SetWindowsHookExW(WH_MOUSE_LL, mouse_hook, module, 0);
+                    if again != 0 {
+                        hook = again;
+                    }
+                }
+                calls = HOOK_CALLS.load(std::sync::atomic::Ordering::Relaxed);
+                seen = now_seen;
+            }
+            if timer != 0 {
+                KillTimer(0, timer);
+            }
             UnhookWindowsHookEx(hook);
         });
     if spawned.is_err() {
@@ -680,6 +740,33 @@ pub fn pointer_watch(on: bool) -> bool {
             true
         }
         _ => false,
+    }
+}
+
+/// Opts the calling thread out of EcoQoS, Windows' throttling of background work: its
+/// timers stay on time and it is not parked on the slow cores. A Windows too old to
+/// know of it refuses, which is no matter.
+fn unthrottle_this_thread() {
+    #[repr(C)]
+    struct ThrottlingState {
+        version: u32,
+        control: u32,
+        state: u32,
+    }
+    const THREAD_POWER_THROTTLING: i32 = 3;
+    const EXECUTION_SPEED: u32 = 1;
+    let off = ThrottlingState {
+        version: 1,
+        control: EXECUTION_SPEED,
+        state: 0,
+    };
+    unsafe {
+        SetThreadInformation(
+            GetCurrentThread(),
+            THREAD_POWER_THROTTLING,
+            (&off as *const ThrottlingState).cast(),
+            std::mem::size_of::<ThrottlingState>() as u32,
+        );
     }
 }
 
@@ -703,6 +790,56 @@ pub fn pointer_send(e: &PointerEvent) {
     unsafe {
         SetCursorPos(e.x, e.y);
         mouse_event(flags, 0, 0, data, 0);
+    }
+}
+
+/// Wakes the screen for a macro and holds it awake on this thread. Monitor-on is asked
+/// of every window, as the shell does; the F15 tap and zero move end a screen saver,
+/// which would otherwise eat the macro's first click. The thread's own execution state
+/// is apart from the UI thread's, so letting go leaves "keep awake" as it was.
+pub fn hold_screen_for_input(on: bool) {
+    const ES_CONTINUOUS: u32 = 0x80000000;
+    const ES_SYSTEM_REQUIRED: u32 = 0x1;
+    const ES_DISPLAY_REQUIRED: u32 = 0x2;
+    unsafe {
+        if !on {
+            SetThreadExecutionState(ES_CONTINUOUS);
+            return;
+        }
+        SetThreadExecutionState(ES_CONTINUOUS | ES_SYSTEM_REQUIRED | ES_DISPLAY_REQUIRED);
+        // The steps' pace is this thread's: throttled, its naps run long.
+        unthrottle_this_thread();
+        // Posted, not sent: a hung window must not hold the macro up.
+        PostMessageW(HWND_BROADCAST, WM_SYSCOMMAND, SC_MONITORPOWER, -1);
+    }
+    nudge_activity();
+}
+
+/// The lock screen (and UAC's prompt) live on the Winlogon desktop, which this program
+/// may not open; its own is "Default".
+pub fn screen_locked() -> bool {
+    const DESKTOP_READOBJECTS: u32 = 0x1;
+    const UOI_NAME: i32 = 2;
+    unsafe {
+        let desk = OpenInputDesktop(0, 0, DESKTOP_READOBJECTS);
+        if desk == 0 {
+            return true;
+        }
+        let mut name = [0u16; 64];
+        let mut needed = 0u32;
+        let read = GetUserObjectInformationW(
+            desk,
+            UOI_NAME,
+            name.as_mut_ptr().cast(),
+            (name.len() * 2) as u32,
+            &mut needed,
+        );
+        CloseDesktop(desk);
+        if read == 0 {
+            return false;
+        }
+        let len = name.iter().position(|&c| c == 0).unwrap_or(name.len());
+        !String::from_utf16_lossy(&name[..len]).eq_ignore_ascii_case("Default")
     }
 }
 

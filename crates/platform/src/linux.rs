@@ -430,8 +430,10 @@ pub fn power(restart: bool) -> bool {
 
 /// Moves are noted no closer together than this: a path does not need every report.
 const MOVE_EVERY_MS: u32 = 8;
-/// Where the noting stops, should a recording be left running.
+/// Where the noting of moves stops, should a recording be left running; clicks and the
+/// wheel go on being noted a good while after, so a long recording keeps what matters.
 const MOST_EVENTS: usize = 200_000;
+const MOST_EVENTS_AT_ALL: usize = 300_000;
 
 struct Watch {
     /// Set while watching; the watching thread stops once it is cleared.
@@ -460,6 +462,8 @@ fn on_wayland() -> bool {
 fn watch_loop(conn: RustConnection, root: Window, on: Arc<AtomicBool>) {
     let started = std::time::Instant::now();
     let mut last_move: Option<u32> = None;
+    // Where the pointer was last seen, for a click when the server is slow to say.
+    let mut last_at: Option<(i32, i32)> = None;
     while on.load(Ordering::Relaxed) {
         let event = match conn.poll_for_event() {
             Ok(Some(event)) => event,
@@ -494,17 +498,23 @@ fn watch_loop(conn: RustConnection, root: Window, on: Arc<AtomicBool>) {
             }
             last_move = Some(at_ms);
         }
-        let Some(p) = conn.query_pointer(root).ok().and_then(|c| c.reply().ok()) else {
+        let moved = act == PointerAct::Move;
+        let asked = conn.query_pointer(root).ok().and_then(|c| c.reply().ok());
+        if let Some(p) = asked {
+            last_at = Some((p.root_x as i32, p.root_y as i32));
+        } else if moved {
             continue;
+        }
+        // A click is not dropped for want of a fresh answer: it is where the pointer was.
+        let Some((x, y)) = last_at else { continue };
+        let most = if moved {
+            MOST_EVENTS
+        } else {
+            MOST_EVENTS_AT_ALL
         };
         let mut w = watch();
-        if on.load(Ordering::Relaxed) && w.events.len() < MOST_EVENTS {
-            w.events.push(PointerEvent {
-                at_ms,
-                x: p.root_x as i32,
-                y: p.root_y as i32,
-                act,
-            });
+        if on.load(Ordering::Relaxed) && w.events.len() < most {
+            w.events.push(PointerEvent { at_ms, x, y, act });
         }
     }
 }
@@ -613,6 +623,53 @@ pub fn nudge_activity() {
         let _ = x.conn.force_screen_saver(ScreenSaver::RESET);
         let _ = x.conn.flush();
     }
+}
+
+/// Wakes the screen for a macro: the screen saver ended and DPMS told to turn the
+/// monitors on, then held so with an inhibitor of its own, so that letting go leaves
+/// "keep awake" as it was.
+pub fn hold_screen_for_input(on: bool) {
+    use x11rb::protocol::dpms::{ConnectionExt as _, DPMSMode};
+    static HOLD: Mutex<Option<std::process::Child>> = Mutex::new(None);
+    let mut hold = HOLD.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(mut c) = hold.take() {
+        let _ = c.kill();
+        let _ = c.wait();
+    }
+    if !on {
+        return;
+    }
+    if let Some(x) = x() {
+        let _ = x.conn.force_screen_saver(ScreenSaver::RESET);
+        // A server without DPMS answers with an error, which is no matter.
+        let _ = x.conn.dpms_force_level(DPMSMode::ON);
+        let _ = x.conn.flush();
+    }
+    *hold = std::process::Command::new("systemd-inhibit")
+        .args([
+            "--what=idle:sleep",
+            "--who=IdleWalker",
+            "--why=Playing a mouse macro",
+            "--mode=block",
+            "sleep",
+            "infinity",
+        ])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .ok();
+}
+
+/// What logind says of this session. Lockers that do not tell logind go unseen, and
+/// count as unlocked, as a macro was played before.
+pub fn screen_locked() -> bool {
+    let session = std::env::var("XDG_SESSION_ID")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "self".into());
+    let args = ["show-session", &session, "-p", "LockedHint", "--value"];
+    super::output_of("loginctl", &args).is_some_and(|v| v.trim() == "yes")
 }
 
 // ---- The foreground window -------------------------------------------------------------------
