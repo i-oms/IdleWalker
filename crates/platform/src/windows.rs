@@ -195,6 +195,15 @@ extern "system" {
     fn CallNextHookEx(hook: isize, code: i32, w: usize, l: isize) -> isize;
     fn GetMessageW(m: *mut MSG, h: HWND, min: u32, max: u32) -> i32;
     fn PostThreadMessageW(thread: u32, m: u32, w: usize, l: isize) -> i32;
+    fn OpenInputDesktop(flags: u32, inherit: i32, access: u32) -> isize;
+    fn CloseDesktop(desk: isize) -> i32;
+    fn GetUserObjectInformationW(
+        obj: isize,
+        index: i32,
+        info: *mut c_void,
+        len: u32,
+        needed: *mut u32,
+    ) -> i32;
 }
 #[repr(C)]
 struct MSG {
@@ -703,6 +712,54 @@ pub fn pointer_send(e: &PointerEvent) {
     unsafe {
         SetCursorPos(e.x, e.y);
         mouse_event(flags, 0, 0, data, 0);
+    }
+}
+
+/// Wakes the screen for a macro and holds it awake on this thread. Monitor-on is asked
+/// of every window, as the shell does; the F15 tap and zero move end a screen saver,
+/// which would otherwise eat the macro's first click. The thread's own execution state
+/// is apart from the UI thread's, so letting go leaves "keep awake" as it was.
+pub fn hold_screen_for_input(on: bool) {
+    const ES_CONTINUOUS: u32 = 0x80000000;
+    const ES_SYSTEM_REQUIRED: u32 = 0x1;
+    const ES_DISPLAY_REQUIRED: u32 = 0x2;
+    unsafe {
+        if !on {
+            SetThreadExecutionState(ES_CONTINUOUS);
+            return;
+        }
+        SetThreadExecutionState(ES_CONTINUOUS | ES_SYSTEM_REQUIRED | ES_DISPLAY_REQUIRED);
+        // Posted, not sent: a hung window must not hold the macro up.
+        PostMessageW(HWND_BROADCAST, WM_SYSCOMMAND, SC_MONITORPOWER, -1);
+    }
+    nudge_activity();
+}
+
+/// The lock screen (and UAC's prompt) live on the Winlogon desktop, which this program
+/// may not open; its own is "Default".
+pub fn screen_locked() -> bool {
+    const DESKTOP_READOBJECTS: u32 = 0x1;
+    const UOI_NAME: i32 = 2;
+    unsafe {
+        let desk = OpenInputDesktop(0, 0, DESKTOP_READOBJECTS);
+        if desk == 0 {
+            return true;
+        }
+        let mut name = [0u16; 64];
+        let mut needed = 0u32;
+        let read = GetUserObjectInformationW(
+            desk,
+            UOI_NAME,
+            name.as_mut_ptr().cast(),
+            (name.len() * 2) as u32,
+            &mut needed,
+        );
+        CloseDesktop(desk);
+        if read == 0 {
+            return false;
+        }
+        let len = name.iter().position(|&c| c == 0).unwrap_or(name.len());
+        !String::from_utf16_lossy(&name[..len]).eq_ignore_ascii_case("Default")
     }
 }
 

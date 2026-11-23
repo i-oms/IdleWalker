@@ -6,6 +6,7 @@
 //! read, renamed, mended or thrown away by hand. Playing it back is by position: the
 //! same places on the screen are clicked, whatever is there by then.
 use crate::ports::{Desktop, MouseKey, Os, PointerAct, PointerEvent, Workstation};
+use idlewalker_domain::prelude::*;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -18,6 +19,27 @@ const HEADER: &str = "\
 
 /// The longest a step may wait: a mistyped number must not hold the mouse for days.
 const LONGEST_WAIT_MS: u32 = 10 * 60 * 1000;
+
+/// Idle this long when a macro starts, the display may be off or asleep: it is woken,
+/// and given a moment, before the first step.
+const IDLE_SECONDS: f64 = 20.0;
+/// Waking, monitors are given at least this long, and at most this, to come back.
+const SETTLE_AT_LEAST: Duration = Duration::from_millis(1500);
+const SETTLE_AT_MOST: Duration = Duration::from_secs(8);
+/// The longest nap while waiting for a step: how soon a stop is heard.
+const NAP: Duration = Duration::from_millis(20);
+/// A nap that runs this far over means the machine slept or the program was held back.
+const OVERSLEPT: Duration = Duration::from_secs(1);
+/// How often, while playing, the screen is asked whether it has locked.
+const LOCK_CHECK_EVERY: Duration = Duration::from_secs(1);
+
+/// Whether every place the steps go to is on one of these screens.
+fn all_on_screen(steps: &[PointerEvent], screens: &[Rectangle]) -> bool {
+    !screens.is_empty()
+        && steps
+            .iter()
+            .all(|s| screens.iter().any(|r| r.contains(Point::new(s.x, s.y))))
+}
 
 /// A macro's name is its file's: letters, digits, "-" and "_", so that it is safe in a
 /// path and fits a Telegram button.
@@ -148,6 +170,8 @@ pub enum Played {
     Missing,
     /// Another is being played, or one is being recorded.
     Busy,
+    /// The screen is locked, before or part-way: what was played went nowhere.
+    Locked,
 }
 
 /// How a request to rename ended.
@@ -297,14 +321,73 @@ impl Macros {
             return Played::Busy;
         }
         self.state.stop.store(false, Ordering::SeqCst);
-        let stop = || self.state.stop.load(Ordering::Relaxed);
-        let started = Instant::now();
+        // Asked before the screen is woken, which is itself input and resets the count.
+        let was_idle = self.desktop.system_idle_seconds() >= IDLE_SECONDS;
+        // The display may be off, a screen saver up, or idle sleep near: woken now, and
+        // kept so to the end, or the first clicks only wake the screen, and a long pause
+        // in the macro lets it go dark (or the machine sleep) again part-way.
+        self.desktop.hold_screen_for_input(true);
+        let played = self.play_steps(&steps, was_idle);
+        self.desktop.hold_screen_for_input(false);
+        self.state.playing.store(false, Ordering::SeqCst);
+        played
+    }
+
+    fn stopping(&self) -> bool {
+        self.state.stop.load(Ordering::Relaxed)
+    }
+
+    /// Naps until `until` while asking to stop is heard; false when it was.
+    fn nap_until(&self, until: Instant) -> bool {
+        while !self.stopping() {
+            let left = until.saturating_duration_since(Instant::now());
+            if left.is_zero() {
+                return true;
+            }
+            std::thread::sleep(left.min(NAP));
+        }
+        false
+    }
+
+    /// After a long idle, monitors that slept come back a moment after the screen
+    /// wakes, and some (DisplayPort ones above all) are missing from the layout until
+    /// then: clicked now, a step meant for one would land on another. So the steps wait,
+    /// a little, for every place they go to be on a screen again.
+    fn settle_after_waking(&self, steps: &[PointerEvent]) -> bool {
+        let woke = Instant::now();
+        if !self.nap_until(woke + SETTLE_AT_LEAST) {
+            return false;
+        }
+        while woke.elapsed() < SETTLE_AT_MOST {
+            if all_on_screen(steps, &self.desktop.screen_bounds()) {
+                return true;
+            }
+            if !self.nap_until(Instant::now() + Duration::from_millis(250)) {
+                return false;
+            }
+        }
+        // A monitor gone for good: played as it lies, as it would be without waiting.
+        true
+    }
+
+    fn play_steps(&self, steps: &[PointerEvent], was_idle: bool) -> Played {
+        if was_idle && !self.settle_after_waking(steps) {
+            return Played::Stopped;
+        }
+        // Input played to a locked screen goes to its password box, not the desktop:
+        // said so, rather than "done" with nothing done.
+        if self.desktop.screen_locked() {
+            return Played::Locked;
+        }
+        let mut checked = Instant::now();
+        let mut started = Instant::now();
         let mut held: Vec<MouseKey> = Vec::new();
         let mut last = None;
-        'steps: for step in &steps {
+        let mut locked = false;
+        'steps: for step in steps {
             let due = Duration::from_millis(step.at_ms as u64);
             loop {
-                if stop() {
+                if self.stopping() {
                     break 'steps;
                 }
                 let left = due.saturating_sub(started.elapsed());
@@ -312,7 +395,23 @@ impl Macros {
                     break;
                 }
                 // In short naps, so that a stop is heard soon.
-                std::thread::sleep(left.min(Duration::from_millis(20)));
+                let nap = left.min(NAP);
+                let before = Instant::now();
+                std::thread::sleep(nap);
+                // A nap that ran far over is the machine having slept, or this program
+                // having been held back: the clock moves on by as much, so the steps
+                // left keep their pace instead of all being done at once on waking.
+                let over = before.elapsed().saturating_sub(nap);
+                if over >= OVERSLEPT {
+                    started += over;
+                }
+            }
+            if checked.elapsed() >= LOCK_CHECK_EVERY {
+                checked = Instant::now();
+                if self.desktop.screen_locked() {
+                    locked = true;
+                    break;
+                }
             }
             self.desktop.pointer_send(step);
             match step.act {
@@ -331,8 +430,9 @@ impl Macros {
                 });
             }
         }
-        self.state.playing.store(false, Ordering::SeqCst);
-        if stop() {
+        if locked {
+            Played::Locked
+        } else if self.stopping() {
             Played::Stopped
         } else {
             Played::Done
@@ -410,6 +510,17 @@ mod tests {
         assert!(!valid_name("../x"));
         assert!(!valid_name("a:b"));
         assert!(!valid_name(&"x".repeat(33)));
+    }
+
+    #[test]
+    fn a_step_on_a_monitor_still_asleep_waits_for_it() {
+        let steps = vec![at(0, 100, 100, Move), at(50, 2500, 300, Down(Left))];
+        let one = Rectangle::new(0, 0, 1920, 1080);
+        let two = Rectangle::new(1920, 0, 1920, 1080);
+        assert!(!all_on_screen(&steps, &[one]));
+        assert!(all_on_screen(&steps, &[one, two]));
+        // No layout to be had yet: not ready either.
+        assert!(!all_on_screen(&steps, &[]));
     }
 
     #[test]

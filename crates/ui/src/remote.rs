@@ -755,6 +755,9 @@ impl Remote {
                     Played::Stopped => format!("{name} was stopped part-way."),
                     Played::Missing => format!("{name} is gone, or its file is not a macro."),
                     Played::Busy => "Not now: a macro is being played or recorded.".into(),
+                    Played::Locked => format!(
+                        "{name} was not played: the screen is locked. Unlock it, then try again."
+                    ),
                 };
                 telegram.call(&token, &Call::send(chat, &text, None), 20);
                 if matches!(played, Played::Done | Played::Stopped) {

@@ -116,6 +116,15 @@ impl Desktop for NativeDesktop {
     fn pointer_send(&self, event: &PointerEvent) {
         backend::pointer_send(event)
     }
+    fn hold_screen_for_input(&self, on: bool) {
+        backend::hold_screen_for_input(on)
+    }
+    fn screen_locked(&self) -> bool {
+        backend::screen_locked()
+    }
+    fn screen_bounds(&self) -> Vec<Rectangle> {
+        backend::screens().into_iter().map(|s| s.bounds).collect()
+    }
 }
 
 // ---- The monitors ------------------------------------------------------------------------

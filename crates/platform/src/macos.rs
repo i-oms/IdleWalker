@@ -771,6 +771,72 @@ pub fn pointer_send(e: &super::PointerEvent) {
     }
 }
 
+/// Wakes the screen for a macro and holds it awake, with `caffeinate`s of its own so
+/// that letting go leaves "keep awake" as it was. `-u` declares the user active, which
+/// turns a sleeping display on and ends the screen saver; it lapses by itself.
+pub fn hold_screen_for_input(on: bool) {
+    use std::sync::Mutex;
+    static HOLD: Mutex<Option<std::process::Child>> = Mutex::new(None);
+    let mut hold = HOLD.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(mut c) = hold.take() {
+        let _ = c.kill();
+        let _ = c.wait();
+    }
+    if !on {
+        return;
+    }
+    let pid = std::process::id().to_string();
+    let _ = super::spawn("caffeinate", &["-u", "-t", "5"]);
+    *hold = std::process::Command::new("caffeinate")
+        .args(["-dim", "-w", &pid])
+        .spawn()
+        .ok();
+}
+
+/// The session's own word: "CGSSessionScreenIsLocked" is in its dictionary, and true,
+/// only while the lock screen is up.
+pub fn screen_locked() -> bool {
+    use std::ffi::c_char;
+    #[link(name = "CoreGraphics", kind = "framework")]
+    extern "C" {
+        fn CGSessionCopyCurrentDictionary() -> *const c_void;
+    }
+    #[link(name = "CoreFoundation", kind = "framework")]
+    extern "C" {
+        fn CFRelease(o: *const c_void);
+        fn CFStringCreateWithCString(
+            allocator: *const c_void,
+            text: *const c_char,
+            encoding: u32,
+        ) -> *const c_void;
+        fn CFDictionaryGetValue(d: *const c_void, key: *const c_void) -> *const c_void;
+        fn CFGetTypeID(o: *const c_void) -> usize;
+        fn CFBooleanGetTypeID() -> usize;
+        fn CFBooleanGetValue(b: *const c_void) -> u8;
+    }
+    unsafe {
+        let session = CGSessionCopyCurrentDictionary();
+        if session.is_null() {
+            return false;
+        }
+        let key = CFStringCreateWithCString(
+            std::ptr::null(),
+            c"CGSSessionScreenIsLocked".as_ptr(),
+            0x0800_0100,
+        );
+        let mut locked = false;
+        if !key.is_null() {
+            let value = CFDictionaryGetValue(session, key);
+            locked = !value.is_null()
+                && CFGetTypeID(value) == CFBooleanGetTypeID()
+                && CFBooleanGetValue(value) != 0;
+            CFRelease(key);
+        }
+        CFRelease(session);
+        locked
+    }
+}
+
 // ---- The foreground window ------------------------------------------------------------------
 
 /// True while the active app has taken the screen: the system reports the full-screen

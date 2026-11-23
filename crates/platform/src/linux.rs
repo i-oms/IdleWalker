@@ -615,6 +615,53 @@ pub fn nudge_activity() {
     }
 }
 
+/// Wakes the screen for a macro: the screen saver ended and DPMS told to turn the
+/// monitors on, then held so with an inhibitor of its own, so that letting go leaves
+/// "keep awake" as it was.
+pub fn hold_screen_for_input(on: bool) {
+    use x11rb::protocol::dpms::{ConnectionExt as _, DPMSMode};
+    static HOLD: Mutex<Option<std::process::Child>> = Mutex::new(None);
+    let mut hold = HOLD.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(mut c) = hold.take() {
+        let _ = c.kill();
+        let _ = c.wait();
+    }
+    if !on {
+        return;
+    }
+    if let Some(x) = x() {
+        let _ = x.conn.force_screen_saver(ScreenSaver::RESET);
+        // A server without DPMS answers with an error, which is no matter.
+        let _ = x.conn.dpms_force_level(DPMSMode::ON);
+        let _ = x.conn.flush();
+    }
+    *hold = std::process::Command::new("systemd-inhibit")
+        .args([
+            "--what=idle:sleep",
+            "--who=IdleWalker",
+            "--why=Playing a mouse macro",
+            "--mode=block",
+            "sleep",
+            "infinity",
+        ])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .ok();
+}
+
+/// What logind says of this session. Lockers that do not tell logind go unseen, and
+/// count as unlocked, as a macro was played before.
+pub fn screen_locked() -> bool {
+    let session = std::env::var("XDG_SESSION_ID")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "self".into());
+    let args = ["show-session", &session, "-p", "LockedHint", "--value"];
+    super::output_of("loginctl", &args).is_some_and(|v| v.trim() == "yes")
+}
+
 // ---- The foreground window -------------------------------------------------------------------
 
 fn active_window(x: &X) -> Option<Window> {

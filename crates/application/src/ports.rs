@@ -181,6 +181,18 @@ pub trait Desktop: Send + Sync {
     /// Does to the mouse what the event says, as if the person had: the cursor goes
     /// there, and the button or wheel follows. When it happened is the caller's to keep.
     fn pointer_send(&self, event: &PointerEvent);
+    /// Readies the screen for played input and keeps it so: with `on`, a display that
+    /// idling turned off is woken, a screen saver ended, and idle sleep, the screen saver
+    /// and display-off held off until called again with false. The hold belongs to the
+    /// calling thread where the OS ties it to one, so both calls come from the same
+    /// thread. It is apart from `keep_awake`: releasing it leaves the person's choice be.
+    fn hold_screen_for_input(&self, on: bool);
+    /// The screen is locked, or another secure screen has the input: played input would
+    /// go there, not to the desktop. Not free (a system call, on Linux a small program):
+    /// asked about once a second at most.
+    fn screen_locked(&self) -> bool;
+    /// Every monitor's bounds as of now, in world pixels; from any thread.
+    fn screen_bounds(&self) -> Vec<Rectangle>;
 }
 
 /// The monitor layout. Read once per frame by `refresh`; every query after that is a
