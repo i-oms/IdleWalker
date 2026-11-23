@@ -430,8 +430,10 @@ pub fn power(restart: bool) -> bool {
 
 /// Moves are noted no closer together than this: a path does not need every report.
 const MOVE_EVERY_MS: u32 = 8;
-/// Where the noting stops, should a recording be left running.
+/// Where the noting of moves stops, should a recording be left running; clicks and the
+/// wheel go on being noted a good while after, so a long recording keeps what matters.
 const MOST_EVENTS: usize = 200_000;
+const MOST_EVENTS_AT_ALL: usize = 300_000;
 
 struct Watch {
     /// Set while watching; the watching thread stops once it is cleared.
@@ -460,6 +462,8 @@ fn on_wayland() -> bool {
 fn watch_loop(conn: RustConnection, root: Window, on: Arc<AtomicBool>) {
     let started = std::time::Instant::now();
     let mut last_move: Option<u32> = None;
+    // Where the pointer was last seen, for a click when the server is slow to say.
+    let mut last_at: Option<(i32, i32)> = None;
     while on.load(Ordering::Relaxed) {
         let event = match conn.poll_for_event() {
             Ok(Some(event)) => event,
@@ -494,17 +498,23 @@ fn watch_loop(conn: RustConnection, root: Window, on: Arc<AtomicBool>) {
             }
             last_move = Some(at_ms);
         }
-        let Some(p) = conn.query_pointer(root).ok().and_then(|c| c.reply().ok()) else {
+        let moved = act == PointerAct::Move;
+        let asked = conn.query_pointer(root).ok().and_then(|c| c.reply().ok());
+        if let Some(p) = asked {
+            last_at = Some((p.root_x as i32, p.root_y as i32));
+        } else if moved {
             continue;
+        }
+        // A click is not dropped for want of a fresh answer: it is where the pointer was.
+        let Some((x, y)) = last_at else { continue };
+        let most = if moved {
+            MOST_EVENTS
+        } else {
+            MOST_EVENTS_AT_ALL
         };
         let mut w = watch();
-        if on.load(Ordering::Relaxed) && w.events.len() < MOST_EVENTS {
-            w.events.push(PointerEvent {
-                at_ms,
-                x: p.root_x as i32,
-                y: p.root_y as i32,
-                act,
-            });
+        if on.load(Ordering::Relaxed) && w.events.len() < most {
+            w.events.push(PointerEvent { at_ms, x, y, act });
         }
     }
 }
