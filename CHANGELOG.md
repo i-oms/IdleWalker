@@ -8,19 +8,20 @@ Notable changes are recorded here. The format follows
 
 ### Added
 
-- *Prevent sleep* in the menu (`/nosleep` in the Telegram remote): the computer no longer
+- *Prevent sleep* in the menu (and in the Telegram remote's buttons): the computer no longer
   sleeps on its own while the screen may still turn off, so the remote stays within reach
   and *Keep system awake* can be switched on from afar at any time.
 - Mouse macros: when a recording stops, a window on every platform asks what to call it.
   The next free `macro-N` is filled in already; Enter saves the name typed, and Esc or
   "Keep ..." leaves that default. The same window can delete the recording, and
-  *Mouse macros > Delete a macro...* removes an existing one, as `/forget` does from the
-  Telegram remote.
+  *Mouse macros > Delete a macro...* removes an existing one, as the Macros page's *Rename or delete* does in
+  the Telegram remote.
 - The Telegram remote can shut the computer down or restart it (`/shutdown`, `/restart`, or
   the buttons under `/menu`), each after asking once.
 - Telegram remote: the menu's choices can be made from a phone through a bot of your own,
-  with slash commands (`/awake off`, `/walkers on`, `/idle 2m`, `/brightness 40`, ...) and
-  with `/menu`, which shows every setting as buttons. Off by default; the first chat to
+  with `/menu`, which shows every setting as buttons. The only other slash commands are
+  `/info`, `/shutdown` and `/restart`; custom colours and macro names are typed in after
+  their button asks for them. Off by default; the first chat to
   write to the bot is paired, and only that one is obeyed. The terminal prompt and brains windows stay on the
   computer.
 

@@ -18,36 +18,11 @@ const API: &str = "https://api.telegram.org";
 pub const LONG_POLL_SECONDS: u32 = 25;
 
 /// The slash commands, as Telegram lists them when "/" is typed.
-pub const COMMANDS: [(&str, &str); 29] = [
+pub const COMMANDS: [(&str, &str); 4] = [
     ("menu", "Every setting, as buttons"),
-    ("status", "How things stand"),
-    ("awake", "Keep system awake: on or off"),
-    ("nosleep", "Prevent sleep: on or off"),
-    ("walkers", "The walkers: on or off"),
-    ("minions", "The Minions: on or off"),
-    ("birds", "The Angry Birds: on or off"),
-    ("hide", "Hide on mouse move: on or off"),
-    ("idle", "Rest before they appear, like 5 or 2m"),
-    ("dress", "Overalls: a name, random or #RRGGBB"),
-    ("corners", "Hot corners: on or off"),
-    ("delay", "Hot corner delay in ms"),
-    ("highlight", "Highlight mouse clicks: on or off"),
-    ("findcursor", "Find cursor: on or off"),
-    ("colour", "left, right or ring, then #RRGGBB"),
-    ("brightness", "Screen brightness, like 40"),
-    ("screenshot", "A picture of every screen"),
-    ("macros", "The recorded mouse macros"),
-    ("run", "Play a macro, like /run macro-1"),
-    ("stop", "Stop the macro being played"),
-    ("rename", "Rename a macro: its name, then the new one"),
-    ("forget", "Delete a macro"),
-    ("startup", "Start at sign-in: on or off"),
-    ("update", "Check for a newer version"),
-    ("about", "Which version is running"),
+    ("info", "How things stand, and the version"),
     ("shutdown", "Shut the computer down"),
     ("restart", "Restart the computer"),
-    ("exit", "Quit IdleWalker"),
-    ("help", "The commands"),
 ];
 
 const TEMPLATE: &str = "\

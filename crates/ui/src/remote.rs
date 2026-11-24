@@ -1,6 +1,7 @@
-//! The Telegram remote's presentation: the tray menu shown as buttons in a chat, and
-//! slash commands for the same choices. The buttons are made from the very description
-//! the tray menu is drawn from, so whatever the menu offers the chat offers too.
+//! The Telegram remote's presentation: the tray menu shown as buttons in a chat. The
+//! buttons are made from the very description the tray menu is drawn from, so whatever
+//! the menu offers the chat offers too. Only a few slash commands remain: /menu, /info,
+//! /shutdown and /restart; everything else is a button.
 //!
 //! A worker waits on Telegram. What it hears goes to the UI thread, where the choices
 //! live, and the answer comes back to be sent; what is slow (brightness, the update
@@ -10,14 +11,14 @@ use crate::prelude::*;
 use crate::tray::{self, Node};
 use idlewalker_application::macros::{Played, Renamed};
 use idlewalker_application::telegram::{
-    Button, Call, Keyboard, Link, Polled, Update, What, COMMANDS, LONG_POLL_SECONDS,
+    Button, Call, Keyboard, Link, Polled, Update, What, LONG_POLL_SECONDS,
 };
 use idlewalker_application::{
     BrightnessInfo, Desktop, Indicator, Journal, Macros, Power, Session, Telegram, UpdateState,
     Updates,
 };
 use std::sync::mpsc;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use winit::event_loop::EventLoopProxy;
 
@@ -40,6 +41,12 @@ mod data {
     /// is at most 32 bytes and has neither ":" nor "!".
     pub const MACROS: &str = "m";
     pub const MACRO_STOP: &str = "m!";
+    /// The page for renaming and deleting macros; "mr:<name>" asks for a new name,
+    /// "md:<name>" asks whether to delete it, and "md!:<name>" deletes it.
+    pub const MACRO_MANAGE: &str = "mm";
+    pub const MACRO_RENAME: &str = "mr:";
+    pub const MACRO_DELETE: &str = "md:";
+    pub const MACRO_DELETE_SURE: &str = "md!:";
     pub const UPDATE: &str = "u";
     pub const ABOUT: &str = "i";
     pub const EXIT: &str = "x";
@@ -53,19 +60,29 @@ mod data {
 
 const NOT_NOW: &str = "Not available while its feature is off.";
 
-/// Commands that switch one thing: the command, the menu id, and what to call it.
-const SWITCHES: [(&str, &str, &str); 10] = [
-    ("awake", "keep-awake", "Keep system awake"),
-    ("nosleep", "prevent-sleep", "Prevent sleep"),
-    ("walkers", "walkers", "Walkers"),
-    ("minions", "minions", "Minions"),
-    ("birds", "birds", "Angry Birds"),
-    ("hide", "hide-on-move", "Hide on mouse move"),
-    ("corners", "corners", "Hot corners"),
-    ("highlight", "click-highlight", "Highlight mouse clicks"),
-    ("findcursor", "find-cursor", "Find cursor"),
-    ("startup", "startup", "Start at sign-in"),
-];
+const SLEEPY: &str = "Nothing holds off sleep now: once the computer sleeps this remote \
+                      cannot reach it. Prevent sleep keeps it within reach.";
+
+/// What a plain message (not a command) is taken as, after a button asked for it.
+#[derive(Clone, Debug, PartialEq)]
+enum Awaiting {
+    /// A colour, for the "-custom" choice with this menu id.
+    Colour(String),
+    /// A new name for this macro.
+    Rename(String),
+}
+
+/// Shared by the worker (renames) and the UI thread (colours). Any command or button
+/// press clears it.
+static AWAITING: Mutex<Option<Awaiting>> = Mutex::new(None);
+
+fn set_awaiting(a: Option<Awaiting>) {
+    *AWAITING.lock().unwrap_or_else(|e| e.into_inner()) = a;
+}
+
+fn awaiting() -> Option<Awaiting> {
+    AWAITING.lock().unwrap_or_else(|e| e.into_inner()).clone()
+}
 
 // ---- The menu as a keyboard --------------------------------------------------------------
 
@@ -275,7 +292,7 @@ fn say(chat: i64, text: &str) -> Vec<Call> {
 
 // ---- What a message does -----------------------------------------------------------------
 
-/// "/Awake@my_bot on" is the command "awake" with "on".
+/// "/Menu@my_bot now" is the command "menu" with "now".
 fn command(text: &str) -> Option<(String, &str)> {
     let text = text.trim().strip_prefix('/')?;
     let (name, rest) = text.split_once(char::is_whitespace).unwrap_or((text, ""));
@@ -291,178 +308,57 @@ fn hex(text: &str) -> Option<i32> {
         .flatten()
 }
 
-/// "5", "5s", "2m", "2 minutes": seconds.
-fn seconds(text: &str) -> Option<i32> {
-    let digits = text.bytes().take_while(|b| b.is_ascii_digit()).count();
-    let n: i32 = text[..digits].parse().ok()?;
-    match text[digits..].trim().bytes().next() {
-        None | Some(b's') => Some(n),
-        Some(b'm') => n.checked_mul(60),
-        _ => None,
+/// What a "-custom" colour choice sets: the indicator (none for the dress), and its name.
+fn custom_colour(id: &str) -> (Option<Indicator>, &'static str) {
+    match id.strip_suffix("-custom") {
+        Some("dress") => (None, "Dress"),
+        Some(i) if i == Indicator::LeftClick.id() => (Some(Indicator::LeftClick), "Left click"),
+        Some(i) if i == Indicator::RightClick.id() => (Some(Indicator::RightClick), "Right click"),
+        _ => (Some(Indicator::FindRing), "Find cursor ring"),
     }
 }
 
-fn help() -> String {
-    let mut out = String::from("IdleWalker's remote. Tap /menu for buttons, or type:\n");
-    for (name, what) in COMMANDS {
-        out.push_str(&format!("\n/{name} - {what}"));
-    }
-    out
+/// What pressing a custom colour asks for.
+fn hint(id: &str) -> String {
+    let (_, label) = custom_colour(id);
+    format!("{label}: send the colour as a message, like #FF8800.")
 }
 
-/// Sets a tick box; with nothing said, shows the group it is in.
-fn switch(session: &mut Session, chat: i64, id: &str, label: &str, arg: &str) -> Vec<Call> {
-    let Some((ticked, _, path)) = find(&menu(session), id, true, "") else {
-        return say(chat, "That choice is not there.");
-    };
-    let want = match arg.to_ascii_lowercase().as_str() {
-        "" => return show(session, chat, &path),
-        "on" | "yes" | "1" => true,
-        "off" | "no" | "0" => false,
-        _ => return say(chat, "Say on or off."),
-    };
-    if ticked != want {
-        session.apply(id);
-    }
-    // Asked again, not assumed: the system may have refused.
-    let now = find(&menu(session), id, true, "").is_some_and(|(t, _, _)| t);
-    let c = session.choices();
-    let sleepy = matches!(id, "keep-awake" | "prevent-sleep") && !c.keep_awake && !c.prevent_sleep;
-    let note = if now != want {
-        " (the system would not change it)"
-    } else if sleepy {
-        // Fair warning, while it can still be undone.
-        "\n\nNothing holds off sleep now: once the computer sleeps this remote cannot \
-         reach it. /nosleep on keeps it within reach."
-    } else {
-        ""
-    };
-    say(chat, &format!("{label}: {}{note}", on_off(now)))
-}
-
-/// One of the offered values, or the group to pick one from.
-fn choose(
-    session: &mut Session,
-    chat: i64,
-    kind: &str,
-    value: Option<i32>,
-    offered: Vec<i32>,
-) -> Vec<Call> {
-    match value.filter(|v| offered.contains(v)) {
-        Some(v) => {
-            session.apply(&format!("{kind}:{v}"));
-            let c = session.choices();
-            say(
-                chat,
-                &match kind {
-                    "idle" => format!("Appear after: {}", tray::describe_idle(c.idle_seconds)),
-                    _ => format!("Hot corner delay: {} ms", c.delay_ms),
-                },
-            )
-        }
-        None => {
-            let first = format!("{kind}:{}", offered[0]);
-            let path = find(&menu(session), &first, true, "").map_or(String::new(), |f| f.2);
-            show(session, chat, &path)
-        }
-    }
-}
-
-fn dress(session: &mut Session, chat: i64, arg: &str) -> Vec<Call> {
-    let arg = arg.to_lowercase();
-    let named = || {
-        (0..SETTINGS_DRESS_NAMES.len())
-            .find(|&i| SETTINGS_DRESS_NAMES[i].to_lowercase().contains(&arg))
-            .map(|i| SETTINGS_DRESS_COLORS[i])
-    };
-    let chosen = match arg.as_str() {
-        "" => None,
-        "random" => Some(Settings::RANDOM_DRESS),
-        _ => hex(&arg).or_else(named),
-    };
-    match chosen {
-        Some(c) => {
-            session.choose_dress(c);
-            let now = tray::describe_dress(session.choices().dress);
-            say(chat, &format!("Dress: {now}"))
-        }
-        None => {
-            let first = format!("dress:{}", SETTINGS_DRESS_COLORS[0]);
-            let path = find(&menu(session), &first, true, "").map_or(String::new(), |f| f.2);
-            show(session, chat, &path)
-        }
-    }
-}
-
-fn colour(session: &mut Session, chat: i64, arg: &str) -> Vec<Call> {
-    let arg = arg.to_lowercase();
-    let (which, value) = arg
-        .split_once(char::is_whitespace)
-        .unwrap_or((arg.as_str(), ""));
-    let which = match which {
-        "left" => Some((Indicator::LeftClick, "Left click")),
-        "right" => Some((Indicator::RightClick, "Right click")),
-        "ring" | "find" => Some((Indicator::FindRing, "Find cursor ring")),
-        _ => None,
-    };
-    let value = value.trim();
-    let rgb = hex(value).or_else(|| {
-        tray::INDICATOR_COLOURS
-            .iter()
-            .find(|(name, _)| name.to_lowercase() == value)
-            .map(|(_, rgb)| *rgb)
-    });
-    match (which, rgb) {
-        (Some((which, label)), Some(rgb)) => {
-            session.choose_indicator_colour(which, rgb);
-            say(chat, &format!("{label}: #{rgb:06X}"))
-        }
-        _ => say(
-            chat,
-            "Say which and what: left, right or ring, then a colour.\n\
-             For example: /colour left #FF8800 or /colour ring cyan",
-        ),
-    }
-}
-
-fn on_text(session: &mut Session, chat: i64, text: &str) -> Vec<Call> {
-    let Some((name, arg)) = command(text) else {
+/// A colour typed after a custom colour button was pressed.
+fn typed_colour(session: &mut Session, chat: i64, id: String, text: &str) -> Vec<Call> {
+    let Some(rgb) = hex(text.trim()) else {
+        set_awaiting(Some(Awaiting::Colour(id)));
         return say(
             chat,
-            "Tap /menu for the settings, or /help for the commands.",
+            "That is not a colour. Send one like #FF8800, or /menu to leave it.",
         );
     };
-    match name.as_str() {
-        "start" | "menu" => show(session, chat, ""),
-        "status" => say(chat, &status(session)),
-        "help" => say(chat, &help()),
-        "idle" => {
-            let offered = SETTINGS_IDLE_CHOICES.items().collect();
-            choose(session, chat, "idle", seconds(arg), offered)
-        }
-        "delay" => {
-            let ms = arg.trim_end_matches("ms").trim().parse().ok();
-            let offered = SETTINGS_HOT_CORNER_DELAY_CHOICES.items().collect();
-            choose(session, chat, "delay", ms, offered)
-        }
-        "dress" => dress(session, chat, arg),
-        "colour" | "color" => colour(session, chat, arg),
-        _ => match SWITCHES.iter().find(|(command, _, _)| *command == name) {
-            Some((_, id, label)) => switch(session, chat, id, label, arg),
-            None => say(chat, "No such command. /help lists them."),
-        },
+    let (which, label) = custom_colour(&id);
+    match which {
+        Some(which) => session.choose_indicator_colour(which, rgb),
+        None => session.choose_dress(rgb),
     }
+    let path = find(&menu(session), &id, true, "").map_or(String::new(), |f| f.2);
+    let (page_text, keys) = page(session, &path);
+    let text = format!("{label}: #{rgb:06X}\n\n{page_text}");
+    vec![Call::send(chat, &text, Some(&keys))]
 }
 
-/// What typing a colour looks like, for the choices that open a picker on the computer.
-fn hint(id: &str) -> String {
-    let which = match id.strip_suffix("-custom") {
-        Some("dress") => return "Send it as text: /dress #FF8800".into(),
-        Some(i) if i == Indicator::LeftClick.id() => "left",
-        Some(i) if i == Indicator::RightClick.id() => "right",
-        _ => "ring",
-    };
-    format!("Send it as text: /colour {which} #FF8800")
+fn on_text(session: &mut Session, chat: i64, text: &str, version: &str) -> Vec<Call> {
+    match command(text) {
+        Some((name, _)) => match name.as_str() {
+            "start" | "menu" => show(session, chat, ""),
+            "info" => say(chat, &format!("{}\n\nVersion {version}", status(session))),
+            _ => say(chat, "No such command. Everything is under /menu."),
+        },
+        None => match awaiting() {
+            Some(Awaiting::Colour(id)) => {
+                set_awaiting(None);
+                typed_colour(session, chat, id, text)
+            }
+            _ => say(chat, "Tap /menu for the buttons."),
+        },
+    }
 }
 
 fn on_press(
@@ -478,6 +374,7 @@ fn on_press(
     } else if let Some(id) = what.strip_prefix(data::HINT) {
         note = hint(id);
         alert = true;
+        set_awaiting(Some(Awaiting::Colour(id.to_string())));
     } else if let Some(p) = what.strip_prefix(data::PAGE) {
         path = Some(p);
     } else if let Some(rest) = what.strip_prefix(data::APPLY) {
@@ -491,6 +388,15 @@ fn on_press(
                 Some((ticked, true, _)) => {
                     if (ticked as i32).to_string() != want {
                         session.apply(id);
+                    }
+                    let c = session.choices();
+                    let sleepy = matches!(id, "keep-awake" | "prevent-sleep")
+                        && !c.keep_awake
+                        && !c.prevent_sleep;
+                    if sleepy {
+                        // Fair warning, while it can still be undone.
+                        note = SLEEPY.into();
+                        alert = true;
                     }
                 }
             }
@@ -506,9 +412,9 @@ fn on_press(
 
 /// What the paired chat's message or button press does, and what to say back. On the UI
 /// thread, where the choices live.
-pub fn respond(session: &mut Session, update: &Update) -> Vec<Call> {
+pub fn respond(session: &mut Session, update: &Update, version: &str) -> Vec<Call> {
     match &update.what {
-        What::Text(text) => on_text(session, update.chat, text),
+        What::Text(text) => on_text(session, update.chat, text, version),
         What::Press {
             callback,
             message,
@@ -577,8 +483,7 @@ fn macros_page(names: &[String], playing: bool) -> (String, Keyboard) {
         "None yet. Record one on the computer: the tray menu, Mouse macros, Record."
     } else {
         "Tap one to play it on the computer; a picture of the screen follows. The same \
-         places are clicked as when it was recorded, whatever is there now.\n\n\
-         /rename and /forget take a macro's name."
+         places are clicked as when it was recorded, whatever is there now."
     });
     if playing {
         text.push_str("\n\nOne is being played now.");
@@ -593,11 +498,51 @@ fn macros_page(names: &[String], playing: bool) -> (String, Keyboard) {
     if playing {
         keys.push(vec![Button::new("\u{23F9} Stop", data::MACRO_STOP)]);
     }
+    if !names.is_empty() {
+        keys.push(vec![Button::new(
+            "\u{2699} Rename or delete",
+            data::MACRO_MANAGE,
+        )]);
+    }
     keys.push(vec![
         Button::new("\u{2039} Menu", data::PAGE),
         Button::new("\u{1F504} Refresh", data::MACROS),
     ]);
     (text, keys)
+}
+
+/// Each macro with a button to rename it and one to delete it.
+fn manage_page(names: &[String]) -> (String, Keyboard) {
+    let text = if names.is_empty() {
+        "Rename or delete a macro\n\nThere are none."
+    } else {
+        "Rename or delete a macro\n\nTap a name to give it a new one."
+    };
+    let mut keys: Keyboard = names
+        .iter()
+        .map(|name| {
+            vec![
+                Button::new(
+                    format!("\u{270F} {name}"),
+                    format!("{}{name}", data::MACRO_RENAME),
+                ),
+                Button::new("\u{1F5D1} Delete", format!("{}{name}", data::MACRO_DELETE)),
+            ]
+        })
+        .collect();
+    keys.push(vec![
+        Button::new("\u{2039} Macros", data::MACROS),
+        Button::new("\u{1F504} Refresh", data::MACRO_MANAGE),
+    ]);
+    (text.into(), keys)
+}
+
+fn delete_page(name: &str) -> (String, Keyboard) {
+    let keys = vec![vec![
+        Button::new("Yes, delete", format!("{}{name}", data::MACRO_DELETE_SURE)),
+        Button::new("\u{2039} No", data::MACRO_MANAGE),
+    ]];
+    (format!("Delete the macro {name}?"), keys)
 }
 
 fn exit_page() -> (String, Keyboard) {
@@ -700,45 +645,24 @@ impl Remote {
         }
     }
 
-    /// A macro command typed in the chat: what to say, and the macro to play if any.
-    fn macro_command(&self, chat: i64, name: &str, arg: &str) -> (Vec<Call>, After) {
-        let mut words = arg.split_whitespace();
-        let (first, second) = (words.next(), words.next());
-        let text = match (name, first, second) {
-            _ if !self.macros.supported() => NO_MACROS_HERE.into(),
-            ("stop", _, _) => self.stop_macro().into(),
-            ("run", Some(which), None) => match self.macros.find(which) {
-                Some(found) => {
-                    let playing = say(chat, &format!("Playing {found}..."));
-                    return (playing, After::Play(found));
-                }
-                None => format!("There is no macro called {which}. /macros lists them."),
-            },
-            ("rename", Some(old), Some(new)) => match self.macros.rename(old, new) {
-                Renamed::Done => format!("{old} is now {new}."),
-                Renamed::Missing => format!("There is no macro called {old}."),
-                Renamed::BadName => {
-                    "A name is letters, digits, - and _, 32 at most, with no spaces.".into()
-                }
-                Renamed::Taken => format!("Another macro is already called {new}."),
-                Renamed::Failed => "The file could not be renamed.".into(),
-            },
-            ("rename", _, _) => "Say which and what: /rename macro-1 open-mail".into(),
-            ("forget", Some(which), None) => {
-                if self.macros.delete(which) {
-                    format!("{which} is forgotten.")
-                } else {
-                    format!("There is no macro called {which}.")
-                }
-            }
-            ("forget", _, _) => "Say which: /forget macro-1".into(),
-            // "/macros", and "/run" without a name.
-            _ => {
-                let (text, keys) = self.macros_page();
-                return (vec![Call::send(chat, &text, Some(&keys))], After::Nothing);
-            }
+    /// A new name typed after a macro's rename button was pressed.
+    fn typed_rename(&self, chat: i64, old: String, new: &str) -> Vec<Call> {
+        let new = new.trim();
+        let retry = |why: String| {
+            set_awaiting(Some(Awaiting::Rename(old.clone())));
+            format!("{why} Send another name, or /menu to leave it.")
         };
-        (say(chat, &text), After::Nothing)
+        let text = match self.macros.rename(&old, new) {
+            Renamed::Done => format!("{old} is now {new}."),
+            Renamed::Missing => format!("There is no macro called {old} any more."),
+            Renamed::BadName => {
+                retry("A name is letters, digits, - and _, 32 at most, with no spaces.".into())
+            }
+            Renamed::Taken => retry(format!("Another macro is already called {new}.")),
+            Renamed::Failed => "The file could not be renamed.".into(),
+        };
+        let (_, keys) = manage_page(&self.macros.list());
+        vec![Call::send(chat, &text, Some(&keys))]
     }
 
     /// Plays a macro on a thread of its own, so that the chat is still heard meanwhile
@@ -774,25 +698,16 @@ impl Remote {
         let chat = update.chat;
         let calls = match &update.what {
             What::Text(text) => {
-                let (name, arg) = command(text)?;
+                let Some((name, _)) = command(text) else {
+                    return match awaiting() {
+                        Some(Awaiting::Rename(old)) => {
+                            set_awaiting(None);
+                            Some((self.typed_rename(chat, old, text), After::Nothing))
+                        }
+                        _ => None,
+                    };
+                };
                 match name.as_str() {
-                    "macros" | "run" | "stop" | "rename" | "forget" => {
-                        return Some(self.macro_command(chat, &name, arg));
-                    }
-                    "brightness" => {
-                        let percent = arg.trim_end_matches('%').trim().parse::<i32>().ok();
-                        let (text, keys) = self.brightness(percent.map(|p| (None, p)));
-                        vec![Call::send(chat, &text, Some(&keys))]
-                    }
-                    "update" => say(chat, &self.update_report()),
-                    "about" => say(chat, &self.about()),
-                    "screenshot" | "screenshots" => {
-                        return Some((Vec::new(), After::Screenshots));
-                    }
-                    "exit" => {
-                        let (text, keys) = exit_page();
-                        vec![Call::send(chat, &text, Some(&keys))]
-                    }
                     "shutdown" | "restart" => {
                         let what = if name == "restart" {
                             Power::Restart
@@ -823,6 +738,31 @@ impl Remote {
                     vec![done, Call::edit(chat, *message, &text, &keys)]
                 } else if what == data::MACRO_STOP {
                     vec![Call::answer(callback, self.stop_macro(), false)]
+                } else if what == data::MACRO_MANAGE {
+                    let (text, keys) = manage_page(&self.macros.list());
+                    vec![done, Call::edit(chat, *message, &text, &keys)]
+                } else if let Some(name) = what.strip_prefix(data::MACRO_RENAME) {
+                    if self.macros.find(name).is_none() {
+                        vec![Call::answer(callback, "That macro is gone.", true)]
+                    } else {
+                        set_awaiting(Some(Awaiting::Rename(name.to_string())));
+                        let ask = format!("Send the new name for {name} as a message.");
+                        vec![Call::answer(callback, &ask, true)]
+                    }
+                } else if let Some(name) = what.strip_prefix(data::MACRO_DELETE_SURE) {
+                    let note = if self.macros.delete(name) {
+                        format!("{name} is deleted.")
+                    } else {
+                        "That macro is gone.".to_string()
+                    };
+                    let (text, keys) = manage_page(&self.macros.list());
+                    vec![
+                        Call::answer(callback, &note, false),
+                        Call::edit(chat, *message, &text, &keys),
+                    ]
+                } else if let Some(name) = what.strip_prefix(data::MACRO_DELETE) {
+                    let (text, keys) = delete_page(name);
+                    vec![done, Call::edit(chat, *message, &text, &keys)]
                 } else if let Some(name) = what.strip_prefix("m:") {
                     if !self.macros.supported() {
                         vec![Call::answer(callback, NO_MACROS_HERE, true)]
@@ -895,6 +835,15 @@ impl Remote {
         // Strangers, and groups before pairing, get no answer: the bot gives nothing away.
         if self.telegram.config().chat != Some(update.chat) {
             return true;
+        }
+        // A command or a press moves on from whatever a button had asked to be typed;
+        // the press itself may ask again.
+        let moves_on = match &update.what {
+            What::Text(text) => command(text).is_some(),
+            What::Press { .. } => true,
+        };
+        if moves_on {
+            set_awaiting(None);
         }
         if let Some((calls, after)) = self.own(&update) {
             let chat = update.chat;
@@ -1015,6 +964,7 @@ pub fn spawn(proxy: EventLoopProxy<UserEvent>, remote: Remote) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use idlewalker_application::telegram::COMMANDS;
 
     fn check(id: &str, label: &str, enabled: bool, checked: bool) -> Node {
         Node::Check {
@@ -1056,19 +1006,13 @@ mod tests {
 
     #[test]
     fn commands_are_read_whatever_their_dress() {
-        assert_eq!(command("/Awake@my_bot  on "), Some(("awake".into(), "on")));
+        assert_eq!(command("/Menu@my_bot  now "), Some(("menu".into(), "now")));
         assert_eq!(command("/menu"), Some(("menu".into(), "")));
         assert_eq!(command("hello"), None);
         assert_eq!(hex("#FF8800"), Some(0xFF8800));
         assert_eq!(hex("ff8800"), Some(0xFF8800));
         assert_eq!(hex("#FF88"), None);
         assert_eq!(hex("+12345"), None);
-        assert_eq!(seconds("5"), Some(5));
-        assert_eq!(seconds("5s"), Some(5));
-        assert_eq!(seconds("2 minutes"), Some(120));
-        assert_eq!(seconds("2m"), Some(120));
-        assert_eq!(seconds("soon"), None);
-        assert_eq!(seconds("5 hours"), None);
     }
 
     #[test]
@@ -1146,15 +1090,18 @@ mod tests {
                 assert!(b.data.len() <= 64, "{}", b.data);
             }
         }
-        assert!(hint("left-click-colour-custom").contains("/colour left"));
-        assert!(hint("find-colour-custom").contains("/colour ring"));
-        assert!(hint("dress-custom").contains("/dress"));
+        assert!(hint("dress-custom").starts_with("Dress"));
+        let names = vec!["a".repeat(32)];
+        let (_, manage) = manage_page(&names);
+        let (_, delete) = delete_page(&names[0]);
+        for b in manage.iter().chain(delete.iter()).flatten() {
+            assert!(b.data.len() <= 64, "{}", b.data);
+        }
     }
 
     #[test]
-    fn every_switch_is_a_listed_command() {
-        for (name, _, _) in SWITCHES {
-            assert!(COMMANDS.iter().any(|(c, _)| *c == name), "{name}");
-        }
+    fn only_the_four_commands_are_listed() {
+        let names: Vec<&str> = COMMANDS.iter().map(|(c, _)| *c).collect();
+        assert_eq!(names, ["menu", "info", "shutdown", "restart"]);
     }
 }

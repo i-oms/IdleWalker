@@ -3724,31 +3724,87 @@ impl Posh {
             return self.install(log);
         };
         let before = self.version_of(&binary).unwrap_or_default();
+        // The newest release, from the same place Oh My Posh's own upgrade looks. Without
+        // it each way is tried once and whatever version results is reported.
+        let latest = self.latest();
+        let current = |v: &str| {
+            latest
+                .as_deref()
+                .is_some_and(|l| !v.is_empty() && !is_newer(l, v))
+        };
+        if current(&before) {
+            log.push(format!(
+                "Oh My Posh {before} is already the newest version."
+            ));
+            return true;
+        }
+        if let Some(l) = &latest {
+            log.push(format!("Updating Oh My Posh {before} to {l}..."));
+        }
+        let now = |s: &Self| {
+            s.find_binary()
+                .and_then(|b| s.version_of(&b))
+                .unwrap_or_default()
+        };
+
+        // 1. The package manager it came from, as the docs say to update it. Its
+        // catalogue can lag the release by days, and winget then exits with "no
+        // applicable upgrade", so a clean exit is not taken as being up to date.
         let path = binary.display().to_string().to_lowercase();
-        let mut ran = false;
         match self.os() {
             Os::Windows if path.contains("windowsapps") || path.contains("programs") => {
-                ran = self.winget("upgrade", WINGET_ID, log);
+                self.winget("upgrade", WINGET_ID, log);
             }
             Os::MacOs if path.contains("/homebrew/") || path.contains("/usr/local/") => {
                 if let Some(brew) = self.ws.find_program("brew") {
                     log.push("Running brew upgrade oh-my-posh...".into());
+                    let _ = self.run(&brew, &["update"]);
                     let r = self.run(&brew, &["upgrade", "oh-my-posh"]);
                     log.extend(tail(&r));
-                    ran = r.success;
                 }
             }
             _ => {}
         }
-        if !ran {
-            log.push("Running oh-my-posh upgrade...".into());
-            let r = self.run(&binary, &["upgrade"]);
-            log.extend(tail(&r));
-            if !r.success && self.os() != Os::Windows {
-                self.install_script(log);
+
+        // 2. Oh My Posh's own upgrade, forced: without --force it trusts its cached
+        // check and can decline. Older builds have no --force, so ask first.
+        let mut after = now(self);
+        if !current(&after) {
+            if let Some(b) = self.find_binary() {
+                let help = self.run(&b, &["upgrade", "--help"]);
+                let force = help.stdout.contains("--force") || help.stderr.contains("--force");
+                let args: &[&str] = if force {
+                    &["upgrade", "--force"]
+                } else {
+                    &["upgrade"]
+                };
+                log.push(format!("Running oh-my-posh {}...", args.join(" ")));
+                let r = self.run(&b, args);
+                log.extend(tail(&r));
+                after = now(self);
             }
         }
-        let after = self.version_of(&binary).unwrap_or_default();
+
+        // 3. The official install script, which installs the newest release over the
+        // old one. Not over the MSIX package on Windows: the script would put a second
+        // copy beside it, and the old one would still come first on PATH.
+        if !current(&after) && !path.contains("windowsapps") {
+            self.install_script(log);
+            after = now(self);
+        }
+
+        if after.is_empty() {
+            log.push("Could not read Oh My Posh's version after updating.".into());
+            return false;
+        }
+        if latest.is_some() && !current(&after) {
+            log.push(format!(
+                "Oh My Posh is still at {after}; the newest is {}. Close every terminal \
+                 that runs it and try again.",
+                latest.as_deref().unwrap_or_default()
+            ));
+            return false;
+        }
         if after != before {
             log.push(format!("Oh My Posh updated: {before} to {after}."));
         } else {
@@ -9958,6 +10014,56 @@ mod tests {
         assert!(!uninstall.contains("--accept-package-agreements"));
         assert!(uninstall.contains("--silent"));
         assert!(uninstall.contains("--accept-source-agreements"));
+    }
+
+    fn windows_store_posh(version_in_turn: &[&str]) -> Arc<Fake> {
+        let mut f = Fake::new(Os::Windows, r"C:\Users\ann");
+        f.env
+            .insert("LOCALAPPDATA".into(), r"C:\Users\ann\AppData\Local".into());
+        let apps = r"C:\Users\ann\AppData\Local\Microsoft\WindowsApps";
+        f.program("winget", &format!(r"{apps}\winget.exe"));
+        f.program("oh-my-posh", &format!(r"{apps}\oh-my-posh.exe"));
+        // winget's catalogue lags the release: it exits cleanly and changes nothing.
+        f.answer("winget.exe", "upgrade", "No available upgrade found.");
+        f.answer(
+            "oh-my-posh.exe",
+            "upgrade --help",
+            "  -f, --force   force the upgrade even if the version is up to date\n",
+        );
+        f.answer("oh-my-posh.exe", "upgrade --force", "upgraded");
+        f.answer_in_turn("oh-my-posh.exe", "version", version_in_turn);
+        Arc::new(f)
+    }
+
+    #[test]
+    fn an_update_winget_cannot_do_is_forced_through_oh_my_posh() {
+        let fake = windows_store_posh(&["33.0.0", "33.0.0", "99.1.0"]);
+        let done = Posh::new(fake.clone()).perform(&Task::Update);
+        let runs = fake.runs();
+        assert!(runs.iter().any(|r| r.contains("winget.exe upgrade")));
+        assert!(runs
+            .iter()
+            .any(|r| r.ends_with("oh-my-posh.exe upgrade --force")));
+        // The MSIX copy is never overlaid by the install script.
+        assert!(!runs.iter().any(|r| r.contains("install.ps1")));
+        assert!(done.ok, "{:?}", done.log);
+        assert!(done.log.iter().any(|l| l.contains("33.0.0 to 99.1.0")));
+    }
+
+    #[test]
+    fn an_update_that_changes_nothing_is_not_reported_as_done() {
+        let fake = windows_store_posh(&["33.0.0"]);
+        let done = Posh::new(fake).perform(&Task::Update);
+        assert!(!done.ok);
+        assert!(done.log.iter().any(|l| l.contains("still at 33.0.0")));
+    }
+
+    #[test]
+    fn an_update_on_the_newest_version_runs_nothing() {
+        let fake = windows_store_posh(&["99.1.0"]);
+        let done = Posh::new(fake.clone()).perform(&Task::Update);
+        assert!(done.ok);
+        assert!(!fake.runs().iter().any(|r| r.contains("upgrade")));
     }
 
     #[test]
