@@ -3733,7 +3733,9 @@ impl Posh {
                 .is_some_and(|l| !v.is_empty() && !is_newer(l, v))
         };
         if current(&before) {
-            log.push(format!("Oh My Posh {before} is already the newest version."));
+            log.push(format!(
+                "Oh My Posh {before} is already the newest version."
+            ));
             return true;
         }
         if let Some(l) = &latest {
@@ -10039,7 +10041,9 @@ mod tests {
         let done = Posh::new(fake.clone()).perform(&Task::Update);
         let runs = fake.runs();
         assert!(runs.iter().any(|r| r.contains("winget.exe upgrade")));
-        assert!(runs.iter().any(|r| r.ends_with("oh-my-posh.exe upgrade --force")));
+        assert!(runs
+            .iter()
+            .any(|r| r.ends_with("oh-my-posh.exe upgrade --force")));
         // The MSIX copy is never overlaid by the install script.
         assert!(!runs.iter().any(|r| r.contains("install.ps1")));
         assert!(done.ok, "{:?}", done.log);
