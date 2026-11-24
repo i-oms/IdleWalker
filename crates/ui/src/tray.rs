@@ -1,5 +1,5 @@
-//! The tray icon and its menu, grouped by feature: Walkers (the master switch plus the
-//! shared "Appear after" delay), then the cast, then Hot corners, then the program.
+//! The tray icon and its menu, grouped by feature: the Walkers switch and their settings,
+//! then Mouse & cursor, Hot corners and Screen & power, then tools, then the program.
 //! The menu is described as plain data from the current choices and shown by
 //! menu_panel.rs. The icon itself comes from `tray-icon` on Windows and macOS, and the
 //! StatusNotifierItem D-Bus protocol on Linux. A left-click opens the brightness panel.
@@ -337,8 +337,9 @@ pub fn build(
         indicator_colour(c, Indicator::RightClick, "Right click", c.click_highlight),
     ];
 
-    let mut nodes = vec![
-        check("walkers", "Walkers", true, c.walkers),
+    // The walkers' own settings. The group stays open while they are off, so their
+    // Brains can still be looked at; the rest of it is greyed.
+    let walker_settings = vec![
         Node::Sub {
             label: format!("Appear after: {}", describe_idle(c.idle_seconds)),
             enabled: w,
@@ -357,41 +358,69 @@ pub fn build(
             children: birds,
         },
         Node::Sep,
-        Node::Sub {
-            label: "Hot corners".into(),
-            enabled: true,
-            children: corners,
-        },
-        Node::Sep,
-        item("brightness", "Brightness..."),
-        item("posh", "Terminal prompt..."),
-        Node::Sub {
-            label: "Highlight mouse clicks".into(),
-            enabled: true,
-            children: clicks,
-        },
+        item("brains", "Brains..."),
+    ];
+
+    let mut mouse = vec![
         Node::Sub {
             label: format!("Find cursor: {} twice", desktop.modifier_name(c.find_key)),
             enabled: true,
             children: find,
         },
+        Node::Sub {
+            label: "Highlight mouse clicks".into(),
+            enabled: true,
+            children: clicks,
+        },
+    ];
+    if let Some(names) = macros {
+        mouse.push(macros_group(names));
+    }
+
+    let screen = vec![
+        item("brightness", "Brightness..."),
+        Node::Sep,
         check("keep-awake", "Keep system awake", true, c.keep_awake),
         check("prevent-sleep", "Prevent sleep", true, c.prevent_sleep),
+    ];
+
+    let mut nodes = vec![
+        check("walkers", "Walkers", true, c.walkers),
+        Node::Sub {
+            label: "Walker settings".into(),
+            enabled: true,
+            children: walker_settings,
+        },
+        Node::Sep,
+        Node::Sub {
+            label: "Mouse & cursor".into(),
+            enabled: true,
+            children: mouse,
+        },
+        Node::Sub {
+            label: "Hot corners".into(),
+            enabled: true,
+            children: corners,
+        },
+        Node::Sub {
+            label: "Screen & power".into(),
+            enabled: true,
+            children: screen,
+        },
+        Node::Sep,
+        item("posh", "Terminal prompt..."),
+    ];
+    if let Some(r) = remote {
+        nodes.push(remote_group(r));
+    }
+    nodes.extend([
+        Node::Sep,
         check("startup", desktop.startup_label(), true, c.startup),
-        item("brains", "Brains..."),
         item("check-update", "Check for updates..."),
         item("about", "About"),
+        Node::Sep,
         item("exit", "Exit"),
-    ];
-    // After "start at sign-in", with the other things the program does for itself.
-    if let Some(names) = macros {
-        let at = nodes.len() - 4;
-        nodes.insert(at, macros_group(names));
-    }
-    if let Some(r) = remote {
-        let at = nodes.len() - 4;
-        nodes.insert(at, remote_group(r));
-    }
+    ]);
     nodes
 }
 
