@@ -127,8 +127,8 @@ cargo build --release
   remote, so *Keep system awake* can be switched on from your phone whenever you need it.
   Closing the lid, pressing the power button or an empty battery still put it to sleep.
 - 📱 **Telegram remote.** Work the menu from your phone through a bot of your own: `/menu`
-  shows every setting as buttons, and commands like `/awake off`, `/walkers on`, `/idle 2m`
-  or `/brightness 40` do one thing at once. `/screenshot` sends a picture of every monitor,
+  shows every setting as buttons, `/info` says how things stand, and `/shutdown` and
+  `/restart` work the computer's power. The Screenshot button sends a picture of every monitor,
   the main display first. Off until you set it up: in the menu open
   *Telegram remote > Set up the bot token*, paste the token
   [@BotFather](https://t.me/BotFather) gives you into the file that opens, and press Start
@@ -137,7 +137,7 @@ cargo build --release
   on your machine listens for connections. It needs `curl`, which Windows, macOS and most
   Linux systems already have.
 - 🖱️ **Mouse macros.** Record what the mouse does (moves, clicks, the wheel) and play it
-  again from the menu or from the Telegram remote: `/macros` lists them as buttons, and a
+  again from the menu or from the Telegram remote: the Macros button lists them, and a
   picture of the screen follows each one played. *Mouse macros > Record* starts, a click on
   the tray icon stops and asks what to call the macro. Only the mouse is recorded, never
   the keyboard. Playing is by position: the same places are clicked, whatever is there by

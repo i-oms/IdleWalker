@@ -976,7 +976,11 @@ impl ApplicationHandler<UserEvent> for App {
                 }
             }
             UserEvent::Remote(update, reply) => {
-                let calls = remote::respond(&mut self.session, &update);
+                let calls = remote::respond(
+                    &mut self.session,
+                    &update,
+                    self.services.updates.current_version(),
+                );
                 let _ = reply.send(calls);
                 // An open menu on the computer shows what the chat just changed.
                 self.update_menu();
