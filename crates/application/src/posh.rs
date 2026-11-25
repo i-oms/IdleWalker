@@ -61,6 +61,12 @@ const DEBUG_FILE: &str = "terminal-debug.txt";
 const DEBUG_KEEP: usize = 6000;
 /// JetBrains IDEs: where the terminal's own font is kept, in current versions, and the
 /// console font that older versions give the terminal.
+/// Visual Studio's Fonts and Colors entry for its Terminal window, under the key each
+/// install keeps in its own registry hive; the font chosen there is its `FontName`.
+const VS_TERMINAL_KEY: &str = r"FontAndColors\{24689D95-4F79-475F-81F0-D6E351D7BCD0}";
+/// Where Visual Studio caches that entry: dropped after a change, so it reads it anew.
+const VS_CACHE_KEY: &str = r"FontAndColors\Cache";
+const VS_TERMINAL_CATEGORY: &str = "{24689D95-4F79-475F-81F0-D6E351D7BCD0}";
 const JETBRAINS_FONTS: [(&str, &str); 2] = [
     ("terminal-font.xml", "TerminalFontOptions"),
     ("console-font.xml", "ConsoleFont"),
@@ -302,6 +308,8 @@ pub enum TerminalKind {
     ITermDynamic,
     /// The IDEs from JetBrains, and Android Studio.
     JetBrains,
+    /// Visual Studio 2019 and later, through the `vsregedit` each install ships.
+    VisualStudio,
 }
 
 #[derive(Clone, Debug)]
@@ -454,8 +462,9 @@ pub struct Done {
 /// back. The target names the program and the place: `vscode:<file>`, `wt:<file>`,
 /// `console:<registry key>`, `gsettings:<schema:path>`, `konsole:<file>`,
 /// `konsole-file:<file>` (one this program made), `xfce:<file>`, `kitty:<file>`,
-/// `alacritty:<file>`, `terminal.app:<profile>`, `iterm2:<profile guid>`, and
-/// `font-file:<path>` for a font file this program installed.
+/// `alacritty:<file>`, `terminal.app:<profile>`, `iterm2:<profile guid>`,
+/// `vs:<Visual Studio install folder>`, and `font-file:<path>` for a font file this
+/// program installed.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Undo {
     pub target: String,
@@ -2372,15 +2381,7 @@ impl Posh {
                         out.push(by_hand(name, how));
                     }
                 }
-                if self
-                    .ws
-                    .exists(&self.local_app_data().join("Microsoft").join("VisualStudio"))
-                {
-                    out.push(by_hand(
-                        "Visual Studio",
-                        "set it in Tools > Options > Environment > Fonts and Colors > Terminal",
-                    ));
-                }
+                self.vs_terminal(&mut out);
             }
             Os::MacOs => self.mac_terminals(&mut out),
             Os::Linux => self.linux_terminals(&mut out),
@@ -4086,6 +4087,7 @@ impl Posh {
                 }
                 TerminalKind::ITermDynamic => self.iterm_dynamic_apply(&mut changes, log),
                 TerminalKind::JetBrains => self.jetbrains_apply(&mut changes, log),
+                TerminalKind::VisualStudio => self.vs_apply(&mut changes, log),
             };
             any |= ok;
         }
@@ -5065,6 +5067,7 @@ impl Posh {
                 "iterm2" => self.iterm_restore(&entries, log),
                 "iterm-dyn" => self.iterm_dynamic_restore(&entries, log),
                 "jetbrains" => self.jetbrains_restore(&entries, log),
+                "vs" => self.vs_restore(&entries, log),
                 "lnk" => self.shortcuts_restore(&entries, log),
                 "whole" => self.shape_restore(Shape::Whole, &entries, log),
                 "conf" => self.shape_restore(Shape::Conf, &entries, log),
@@ -5866,6 +5869,156 @@ impl Posh {
             }
         }
         log.push("JetBrains IDEs: font settings put back.".into());
+        ok
+    }
+
+    // ---- Visual Studio ----
+
+    /// The `vsregedit` an install ships, which reads and writes its private registry.
+    fn vs_tool(install: &str) -> PathBuf {
+        PathBuf::from(install)
+            .join("Common7")
+            .join("IDE")
+            .join("vsregedit.exe")
+    }
+
+    /// Each Visual Studio install that has `vsregedit`, by its folder, as `vswhere` lists them.
+    fn visual_studios(&self) -> Vec<String> {
+        let vswhere = self
+            .program_files_x86()
+            .join("Microsoft Visual Studio")
+            .join("Installer")
+            .join("vswhere.exe");
+        if !self.ws.exists(&vswhere) {
+            return Vec::new();
+        }
+        let r = self.run(
+            &vswhere,
+            &["-all", "-prerelease", "-property", "installationPath"],
+        );
+        if !r.success {
+            return Vec::new();
+        }
+        r.stdout
+            .lines()
+            .map(str::trim)
+            .filter(|l| !l.is_empty() && self.ws.exists(&Self::vs_tool(l)))
+            .map(String::from)
+            .collect()
+    }
+
+    /// The Terminal's font in one install, when one was ever chosen.
+    fn vs_font(&self, install: &str) -> Option<String> {
+        let r = self.run(
+            &Self::vs_tool(install),
+            &["read", install, "HKCU", VS_TERMINAL_KEY, "FontName", "string"],
+        );
+        if !r.success {
+            return None;
+        }
+        // It prints `Name: FontName, Value: <font>`.
+        r.stdout
+            .split_once(", Value: ")
+            .map(|(_, v)| v.trim().to_string())
+            .filter(|v| !v.is_empty())
+    }
+
+    /// Drops the cached Terminal entry, so Visual Studio reads the font afresh.
+    fn vs_drop_cache(&self, install: &str) {
+        self.run(
+            &Self::vs_tool(install),
+            &["delete", install, "HKCU", VS_CACHE_KEY, VS_TERMINAL_CATEGORY],
+        );
+    }
+
+    fn vs_terminal(&self, out: &mut Vec<TerminalStatus>) {
+        let installs = self.visual_studios();
+        if installs.is_empty() {
+            // Settings folder but no install this program can write to: an old one.
+            if self
+                .ws
+                .exists(&self.local_app_data().join("Microsoft").join("VisualStudio"))
+            {
+                out.push(by_hand(
+                    "Visual Studio",
+                    "set it in Tools > Options > Environment > Fonts and Colors > Terminal",
+                ));
+            }
+            return;
+        }
+        let all = installs
+            .iter()
+            .all(|i| self.vs_font(i).is_some_and(|f| is_nerd_font(&f)));
+        out.push(TerminalStatus {
+            name: "Visual Studio".into(),
+            kind: TerminalKind::VisualStudio,
+            target: String::new(),
+            font_set: all,
+            detail: if installs.len() == 1 {
+                "1 install".into()
+            } else {
+                format!("{} installs", installs.len())
+            },
+        });
+    }
+
+    fn vs_apply(&self, changes: &mut Changes, log: &mut Vec<String>) -> bool {
+        let mut any = false;
+        for install in self.visual_studios() {
+            let before = self.vs_font(&install);
+            let set = self
+                .run(
+                    &Self::vs_tool(&install),
+                    &[
+                        "set",
+                        &install,
+                        "HKCU",
+                        VS_TERMINAL_KEY,
+                        "FontName",
+                        "string",
+                        FONT_MONO,
+                    ],
+                )
+                .success;
+            if set {
+                changes.remember(&format!("vs:{install}"), "FontName", before);
+                self.vs_drop_cache(&install);
+                any = true;
+            } else {
+                log.push(format!(
+                    "Visual Studio: the font could not be set in {install}. Close it and try again."
+                ));
+            }
+        }
+        if any {
+            log.push(format!(
+                "Visual Studio: terminal font set to {FONT_MONO}. Restart it if it was open."
+            ));
+        }
+        any
+    }
+
+    fn vs_restore(&self, entries: &[&Undo], log: &mut Vec<String>) -> bool {
+        let mut ok = true;
+        for (install, list) in Self::by_target(entries) {
+            let tool = Self::vs_tool(&install);
+            if !self.ws.exists(&tool) {
+                continue; // uninstalled: nothing to put back
+            }
+            for u in list {
+                let args: Vec<&str> = match &u.before {
+                    Some(v) => vec!["set", &install, "HKCU", VS_TERMINAL_KEY, &u.key, "string", v],
+                    None => vec!["remove", &install, "HKCU", VS_TERMINAL_KEY, &u.key],
+                };
+                ok &= self.run(&tool, &args).success;
+            }
+            self.vs_drop_cache(&install);
+        }
+        log.push(if ok {
+            "Visual Studio: font settings put back.".into()
+        } else {
+            "Visual Studio: could not put every font setting back. Close it and try again.".into()
+        });
         ok
     }
 
@@ -10572,6 +10725,58 @@ mod tests {
         assert!(fake
             .text("/home/ann/.config/tilda/config_1")
             .contains("Hack 9"));
+    }
+
+    #[test]
+    fn visual_studio_terminal_font_is_set_and_put_back() {
+        let install = r"C:\VS\18\Insiders";
+        let mut f = Fake::new(Os::Windows, r"C:\Users\ann");
+        let vswhere = PathBuf::from(r"C:\Program Files (x86)")
+            .join("Microsoft Visual Studio")
+            .join("Installer")
+            .join("vswhere.exe");
+        f.file(&vswhere.display().to_string(), "");
+        // An install from before vsregedit is listed too, and left out.
+        f.answer("vswhere.exe", "-all", &format!("{install}\r\nC:\\VS\\old\r\n"));
+        f.file(&Posh::vs_tool(install).display().to_string(), "");
+        let read = format!("read {install} HKCU {VS_TERMINAL_KEY} FontName string");
+        f.answer(
+            "vsregedit.exe",
+            &read,
+            "Name: FontName, Value: Cascadia Mono",
+        );
+        f.answer("vsregedit.exe", "set", "");
+        f.answer("vsregedit.exe", "delete", "");
+        let fake = Arc::new(f);
+        let posh = Posh::new(fake.clone());
+        let st = posh.status();
+        let row = st
+            .terminals
+            .iter()
+            .find(|t| t.kind == TerminalKind::VisualStudio)
+            .unwrap();
+        assert_eq!(row.detail, "1 install");
+        assert!(!row.font_set);
+
+        let done = posh.perform(&Task::SetTerminalFonts);
+        assert!(done.ok, "{:?}", done.log);
+        let runs = fake.runs();
+        assert!(
+            runs.iter().any(|r| r.ends_with(&format!(
+                "set {install} HKCU {VS_TERMINAL_KEY} FontName string {FONT_MONO}"
+            ))),
+            "{runs:?}"
+        );
+        assert!(runs.iter().any(|r| r.ends_with(&format!(
+            "delete {install} HKCU {VS_CACHE_KEY} {VS_TERMINAL_CATEGORY}"
+        ))));
+        assert!(!runs.iter().any(|r| r.contains(r"C:\VS\old HKCU")));
+
+        let done = posh.perform(&Task::RestoreTerminalFonts);
+        assert!(done.ok, "{:?}", done.log);
+        assert!(fake.runs().iter().any(|r| r.ends_with(&format!(
+            "set {install} HKCU {VS_TERMINAL_KEY} FontName string Cascadia Mono"
+        ))));
     }
 
     #[test]
