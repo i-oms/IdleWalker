@@ -179,11 +179,16 @@ impl Dialog {
         let mut attrs = Window::default_attributes()
             .with_title(title)
             .with_inner_size(inner)
-            .with_resizable(false)
+            // Framed dialogs lay out against the window's size, so they may be enlarged;
+            // never below the size they open at, which is the least their rows need. The
+            // bare tray panels are sized and placed by `fit`.
+            .with_resizable(!bare)
             .with_decorations(!bare)
             .with_window_level(WindowLevel::AlwaysOnTop);
         if bare {
             attrs = attrs.with_position(position);
+        } else {
+            attrs = attrs.with_min_inner_size(inner);
         }
         #[cfg(windows)]
         {
