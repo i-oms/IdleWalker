@@ -10016,6 +10016,9 @@ mod tests {
         assert!(uninstall.contains("--accept-source-agreements"));
     }
 
+    /// Windows paths are split into folder and file name only on a Windows host, so
+    /// these update tests run there alone.
+    #[cfg(windows)]
     fn windows_store_posh(version_in_turn: &[&str]) -> Arc<Fake> {
         let mut f = Fake::new(Os::Windows, r"C:\Users\ann");
         f.env
@@ -10035,6 +10038,7 @@ mod tests {
         Arc::new(f)
     }
 
+    #[cfg(windows)]
     #[test]
     fn an_update_winget_cannot_do_is_forced_through_oh_my_posh() {
         let fake = windows_store_posh(&["33.0.0", "33.0.0", "99.1.0"]);
@@ -10050,6 +10054,7 @@ mod tests {
         assert!(done.log.iter().any(|l| l.contains("33.0.0 to 99.1.0")));
     }
 
+    #[cfg(windows)]
     #[test]
     fn an_update_that_changes_nothing_is_not_reported_as_done() {
         let fake = windows_store_posh(&["33.0.0"]);
@@ -10058,6 +10063,7 @@ mod tests {
         assert!(done.log.iter().any(|l| l.contains("still at 33.0.0")));
     }
 
+    #[cfg(windows)]
     #[test]
     fn an_update_on_the_newest_version_runs_nothing() {
         let fake = windows_store_posh(&["99.1.0"]);
